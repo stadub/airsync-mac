@@ -164,7 +164,10 @@ struct ADBConnector {
         
         DispatchQueue.main.async {
             AppState.shared.adbConnecting = true
-            let devicePorts = AppState.shared.device?.adbPorts ?? []
+            let reportedPorts = AppState.shared.device?.adbPorts ?? []
+            // Reuse the saved port only for the same host and only when none was reported.
+            let devicePorts = reportedPorts.isEmpty && AppState.shared.adbConnectedIP == ip
+                ? [String(AppState.shared.adbPort)] : reportedPorts
             let fallbackToMdns = AppState.shared.fallbackToMdns
 
             DispatchQueue.global(qos: .userInitiated).async {
@@ -186,6 +189,21 @@ struct ADBConnector {
                     try? process.run()
                     process.waitUntilExit()
                     logBinaryDetection("ADB server killed.")
+                }
+
+                // The phone app may cache an old debugging port. Prefer a live,
+                // authorized ADB transport for the exact same host when available.
+                if let port = connectedWirelessPort(adbPath: adbPath, ip: ip) {
+                    DispatchQueue.main.async {
+                        clearConnectionFlag()
+                        AppState.shared.adbConnectedIP = ip
+                        AppState.shared.adbPort = port
+                        AppState.shared.adbConnectionMode = .wireless
+                        AppState.shared.adbConnecting = false
+                        AppState.shared.adbConnectionResult = "Using connected wireless device at \(ip):\(port)"
+                        AppState.shared.adbConnected = true
+                    }
+                    return
                 }
 
                 if devicePorts.isEmpty {
@@ -232,6 +250,29 @@ struct ADBConnector {
                 proceedWithConnection(adbPath: adbPath, ip: ip, portsToTry: portsToTry)
             }
         }
+    }
+
+    private static func connectedWirelessPort(adbPath: String, ip: String) -> UInt16? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: adbPath)
+        process.arguments = ["devices"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            for line in (String(data: data, encoding: .utf8) ?? "").split(separator: "\n") {
+                let fields = line.split(whereSeparator: { $0.isWhitespace })
+                guard fields.count >= 2, fields[1] == "device",
+                      fields[0].hasPrefix(ip + ":"),
+                      let port = UInt16(fields[0].dropFirst(ip.count + 1)), port > 0 else { continue }
+                return port
+            }
+        } catch { print("[adb-connector] Could not inspect active transports: \(error)") }
+        return nil
     }
 
     private static func discoverADBPorts(adbPath: String, ip: String, completion: @escaping ([UInt16]) -> Void) {
