@@ -498,6 +498,7 @@ struct ADBConnector {
         let manualPositionCoords = UserDefaults.standard.manualPositionCoords
         let continueApp = UserDefaults.standard.continueApp
         let directKeyInput = UserDefaults.standard.directKeyInput
+        let followMacKeyboard = UserDefaults.standard.object(forKey: "followMacKeyboardLayout") as? Bool ?? true
         let dpi = UserDefaults.standard.scrcpyDesktopDpi
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -547,7 +548,7 @@ struct ADBConnector {
                     if stayAwake { args.append("--stay-awake") }
                     if turnScreenOff { args.append("--turn-screen-off") }
                     if noAudio { args.append("--no-audio") }
-                    if directKeyInput { args.append("--keyboard=uhid") }
+                    if followMacKeyboard || directKeyInput { args.append("--keyboard=uhid") }
 
                     let displayArg = "/\(dpi)"
 
@@ -585,6 +586,7 @@ struct ADBConnector {
                         let data = pipe.fileHandleForReading.readDataToEndOfFile()
                         let output = String(data: data, encoding: .utf8) ?? ""
                         DispatchQueue.main.async {
+                            KeyboardLayoutSync.shared.remove(processID: process.processIdentifier)
                             AppState.shared.adbConnectionResult = "scrcpy exited:\n" + output
                             if process.terminationStatus != 0 {
                                 let lower = output.lowercased()
@@ -602,6 +604,10 @@ struct ADBConnector {
 
                     do {
                         try task.run()
+                        if followMacKeyboard, let adbPath = task.environment?["ADB"] {
+                            let serial = wiredAdbEnabled ? (serialToUse ?? fullAddress) : fullAddress
+                            DispatchQueue.main.async { KeyboardLayoutSync.shared.register(process: task, adbPath: adbPath, serial: serial) }
+                        }
                     } catch {
                         DispatchQueue.main.async {
                             AppState.shared.adbConnectionResult = "Failed to start scrcpy: \(error.localizedDescription)"
