@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A17C00000000000000000001 /* KeyboardLayoutBridge.jar in Resources */ = {isa = PBXBuildFile; fileRef = A17C00000000000000000002 /* KeyboardLayoutBridge.jar */; };
 		B94971602F62509A00F59BC9 /* BigInt in Frameworks */ = {isa = PBXBuildFile; productRef = B949715F2F62509A00F59BC9 /* BigInt */; };
 		B94971632F6250DE00F59BC9 /* ASN1 in Frameworks */ = {isa = PBXBuildFile; productRef = B94971622F6250DE00F59BC9 /* ASN1 */; };
 		B94971662F62514500F59BC9 /* SwiftECC in Frameworks */ = {isa = PBXBuildFile; productRef = B94971652F62514500F59BC9 /* SwiftECC */; };
@@ -50,6 +51,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A17C00000000000000000002 /* KeyboardLayoutBridge.jar */ = {isa = PBXFileReference; lastKnownFileType = file; path = "airsync-mac/Resources/KeyboardLayoutBridge.jar"; sourceTree = SOURCE_ROOT; };
 		B9673B572E35A2A1006D284A /* AirSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AirSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B99B04C52F641E1400FF3E2D /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		B99D63F83059A794003D951A /* AirSyncWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AirSyncWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -64,6 +66,7 @@
 		B933ED362E3BEC21007393CB /* Exceptions for "airsync-mac" folder in "AirSync" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Resources/KeyboardLayoutBridge.jar,
 				Configs/Secrets.example.xcconfig,
 				Configs/Secrets.xcconfig,
 				Configs/SelfCompiled.xcconfig,
@@ -142,6 +145,7 @@
 		B9673B4E2E35A2A1006D284A = {
 			isa = PBXGroup;
 			children = (
+				A17C00000000000000000002 /* KeyboardLayoutBridge.jar */,
 				B99D64153059A9FC003D951A /* AirSyncWidgetExtension.entitlements */,
 				B99D64143059A9B3003D951A /* AirSync.entitlements */,
 				B9673B592E35A2A1006D284A /* airsync-mac */,
@@ -286,6 +290,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A17C00000000000000000001 /* KeyboardLayoutBridge.jar in Resources */,
 				B9E423832FBD914900526D40 /* scrcpy-server in Resources */,
 				B99B04C62F641E1400FF3E2D /* AppIcon.icon in Resources */,
 			);
