@@ -52,8 +52,10 @@ extension View {
 
 extension View {
     @ViewBuilder
-    func applyGlassViewIfAvailable(cornerRadius: CGFloat = 20) -> some View {
-        if !UIStyle.pretendOlderOS, #available(macOS 26.0, *) {
+    func applyGlassViewIfAvailable(cornerRadius: CGFloat = 20, enabled: Bool = true) -> some View {
+        if !enabled {
+            self
+        } else if !UIStyle.pretendOlderOS, #available(macOS 26.0, *) {
             self.background(.clear)
                 .glassEffect(in: .rect(cornerRadius: cornerRadius))
         } else {
