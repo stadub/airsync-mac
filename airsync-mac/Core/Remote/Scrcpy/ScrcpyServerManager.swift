@@ -13,8 +13,12 @@ class ScrcpyServerManager: NSObject {
     private let serverLocalPath = Bundle.main.path(forResource: "scrcpy-server", ofType: nil) ?? "/Users/sameerasandakelum/GIT/airsync-mac/scrcpy-server"
     private let serverRemotePath = "/data/local/tmp/scrcpy-server"
     private let serverPort: Int = 1234
+    // Isolate the native mirror from scrcpy windows launched for individual apps.
+    private let serverSessionID = "0a175001"
     
     private var adbProcess: Process?
+    private var sessionAudioEnabled = false
+    private var sessionGeneration = UUID()
     
     func startServer(serial: String, desktopMode: Bool = false, completion: @escaping (Bool) -> Void) {
         let adbPath = ADBConnector.findExecutable(named: "adb", fallbackPaths: ADBConnector.possibleADBPaths) ?? "/opt/homebrew/bin/adb"
@@ -32,7 +36,7 @@ class ScrcpyServerManager: NSObject {
         // Kill existing server process on device
         let killProcess = Process()
         killProcess.executableURL = URL(fileURLWithPath: adbPath)
-        killProcess.arguments = ["-s", serial, "shell", "pkill -f com.genymobile.scrcpy.Server || true"]
+        killProcess.arguments = ["-s", serial, "shell", "pkill -f '[c]om.genymobile.scrcpy.Server.*scid=\(serverSessionID)' || true"]
         try? killProcess.run()
         killProcess.waitUntilExit()
         
@@ -78,7 +82,7 @@ class ScrcpyServerManager: NSObject {
         
         let process = Process()
         process.executableURL = URL(fileURLWithPath: adbPath)
-        process.arguments = ["-s", serial, "forward", "tcp:\(serverPort)", "localabstract:scrcpy"]
+        process.arguments = ["-s", serial, "forward", "tcp:\(serverPort)", "localabstract:scrcpy_\(serverSessionID)"]
         
         do {
             try process.run()
@@ -99,11 +103,22 @@ class ScrcpyServerManager: NSObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: adbPath)
         
+        sessionAudioEnabled = !UserDefaults.standard.noAudio
         var serverArgs = [
-            "tunnel_forward=true", "audio=false", "video=true", "control=true",
+            "scid=\(serverSessionID)", "tunnel_forward=true", "audio=\(sessionAudioEnabled)", "video=true", "control=true",
             "video_codec=h265", "video_bit_rate=8000000"
         ]
         
+        if UserDefaults.standard.stayAwake {
+            serverArgs += ["stay_awake=true", "keep_active=true"]
+        }
+
+        if sessionAudioEnabled {
+            serverArgs.append("audio_codec=raw")
+            let keepPhoneAudio = UserDefaults.standard.object(forKey: "keepPhoneAudio") as? Bool ?? true
+            serverArgs += ["audio_source=playback", "audio_dup=\(keepPhoneAudio)"]
+        }
+
         if desktopMode {
             // Virtual display — new_display requires "WxH" or "WxH/DPI" format
             let dpi = UserDefaults.standard.scrcpyDesktopDpi
@@ -143,6 +158,7 @@ class ScrcpyServerManager: NSObject {
                     // Detect readiness: "[server] INFO: Video size: ..." or "[server] INFO: New display: ..."
                     if trimmed.contains("INFO: Video size:") || trimmed.contains("INFO: New display:") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            guard self?.adbProcess === process else { return }
                             self?.launchTimer?.invalidate()
                             self?.launchTimer = nil
                             self?.launchCompletion?(true)
@@ -156,6 +172,7 @@ class ScrcpyServerManager: NSObject {
                         // Trigger failure if it's a critical error
                         if trimmed.contains("Permission denied") || trimmed.contains("could not start") {
                             DispatchQueue.main.async {
+                                guard self?.adbProcess === process else { return }
                                 self?.launchCompletion?(false)
                                 self?.launchCompletion = nil
                             }
@@ -185,6 +202,9 @@ class ScrcpyServerManager: NSObject {
     }
     
     func stopServer() {
+        launchTimer?.invalidate()
+        launchTimer = nil
+        launchCompletion = nil
         if let process = adbProcess {
             DispatchQueue.main.async { KeyboardLayoutSync.shared.remove(processID: process.processIdentifier) }
             if let pipe = process.standardOutput as? Pipe {
@@ -193,7 +213,7 @@ class ScrcpyServerManager: NSObject {
             if let pipe = process.standardError as? Pipe {
                 pipe.fileHandleForReading.readabilityHandler = nil
             }
-            process.terminate()
+            if process.isRunning { process.terminate() }
         }
         adbProcess = nil
         
@@ -256,11 +276,20 @@ class ScrcpyServerManager: NSObject {
                     streamClient.onPacketReceived = { data, isConfig, isKeyframe, pts in
                         ScrcpyVideoDecoder.shared.decodePacket(data: data, isConfig: isConfig, pts: pts)
                     }
-                    streamClient.connect()
-                    ScrcpyControlClient.shared.connect(onKeyboardReady: { [weak self] in
-                        guard let process = self?.adbProcess else { return }
-                        let adbPath = ADBConnector.findExecutable(named: "adb", fallbackPaths: ADBConnector.possibleADBPaths) ?? "/opt/homebrew/bin/adb"
-                        KeyboardLayoutSync.shared.register(process: process, adbPath: adbPath, serial: serial)
+                    let generation = self.sessionGeneration
+                    let openControl = { [weak self] in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        ScrcpyControlClient.shared.connect(onKeyboardReady: { [weak self] in
+                            guard let process = self?.adbProcess else { return }
+                            let adbPath = ADBConnector.findExecutable(named: "adb", fallbackPaths: ADBConnector.possibleADBPaths) ?? "/opt/homebrew/bin/adb"
+                            KeyboardLayoutSync.shared.register(process: process, adbPath: adbPath, serial: serial)
+                        })
+                    }
+                    streamClient.connect(onTransportReady: { [weak self] in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        if self.sessionAudioEnabled {
+                            ScrcpyAudioClient.shared.connect(onSocketReady: openControl)
+                        } else { openControl() }
                     })
                     completion(true, nil)
                 }
@@ -269,6 +298,8 @@ class ScrcpyServerManager: NSObject {
     }
     
     func stopMirroringSession(streamClient: ScrcpyStreamClient) {
+        sessionGeneration = UUID()
+        ScrcpyAudioClient.shared.disconnect()
         streamClient.disconnect()
         ScrcpyControlClient.shared.disconnect()
         self.stopServer()
