@@ -383,6 +383,7 @@ extension WebSocketServer {
                     likeStatus: likeStatus,
                     duration: durationSec,
                     position: positionSec,
+                    packageName: (music["packageName"] as? String) ?? (music["package"] as? String),
                     isBuffering: isBuffering
                 )
             )

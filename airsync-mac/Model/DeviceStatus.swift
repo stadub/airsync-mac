@@ -26,6 +26,7 @@ struct DeviceStatus: Codable {
         /// Current playback position in seconds (corrected for network transit on Mac side).
         var position: Double
         /// True when Android is buffering — position is frozen, Mac timer should pause.
+        var packageName: String? = nil
         var isBuffering: Bool
     }
 
