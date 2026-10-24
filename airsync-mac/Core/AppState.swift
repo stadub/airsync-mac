@@ -322,7 +322,7 @@ class AppState: ObservableObject {
         }
         
         // .default mode lets the OS coalesce the timer under load; tolerance allows up to 0.5s slip
-        let timer = Timer.publish(every: 1.0, on: .main, in: .default).autoconnect()
+        let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
         callDurationTimer = timer
             .sink { [weak self] _ in
                 guard let self = self, let call = self.activeCall else {
@@ -1951,7 +1951,7 @@ class AppState: ObservableObject {
     
     func startMediaTimer() {
         guard mediaTickTimer == nil else { return }
-        mediaTickTimer = Timer.publish(every: 1.0, on: .main, in: .default)
+        mediaTickTimer = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self,
@@ -2017,9 +2017,7 @@ class AppState: ObservableObject {
     func handleTrackChange() {
         seekTargetPosition = -1
         lastMediaSeekTime = .distantPast
-        if let pos = status?.music?.position {
-            syncMediaPosition(incoming: pos)
-        }
+        mediaPosition = max(0, status?.music?.position ?? 0)
     }
 
     private func updateWidgetData() {
