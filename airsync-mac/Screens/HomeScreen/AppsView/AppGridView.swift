@@ -28,7 +28,7 @@ struct AppGridView: View {
     var sortedAppsList: [AndroidApp] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
-            return filteredApps.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+            return filteredApps.sorted(by: appNameComesFirst)
         } else {
             let lowerQuery = query.lowercased()
             return filteredApps.sorted { app1, app2 in
@@ -42,9 +42,14 @@ struct AppGridView: View {
                     return starts1
                 }
                 
-                return app1.name.localizedCaseInsensitiveCompare(app2.name) == .orderedAscending
+                return appNameComesFirst(app1, app2)
             }
         }
+    }
+
+    private func appNameComesFirst(_ first: AndroidApp, _ second: AndroidApp) -> Bool {
+        let comparison = first.name.localizedStandardCompare(second.name)
+        return comparison == .orderedSame ? first.packageName < second.packageName : comparison == .orderedAscending
     }
 
     var body: some View {
