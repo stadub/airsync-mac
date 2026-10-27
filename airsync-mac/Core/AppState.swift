@@ -33,6 +33,47 @@ class AppState: ObservableObject {
         UserDefaults.standard.set(choices, forKey: "lastMirrorModeByDevice")
     }
 
+    @Published var externalScreenMirrorCount = 0
+    @Published private(set) var switchingScreenMirror = false
+
+    var isScreenMirroring: Bool {
+        isSidebarMirroring || isNativeMirroring || externalScreenMirrorCount > 0
+    }
+
+    var preferredScreenMirrorMode: RememberedMirrorMode {
+        if let id = device?.deviceId {
+            for key in ["lastScreenMirrorModeByDevice", "lastMirrorModeByDevice"] {
+                if let choices = UserDefaults.standard.dictionary(forKey: key) as? [String: String],
+                   let raw = choices[id], let mode = RememberedMirrorMode(rawValue: raw),
+                   mode == .embedded || mode == .native || mode == .scrcpy { return mode }
+            }
+        }
+        return useNativeMirroringByDefault ? .native : .scrcpy
+    }
+
+    func closeScreenMirroring(completion: @escaping () -> Void = {}) {
+        isSidebarMirroring = false
+        isNativeMirroring = false
+        ADBConnector.closeScreenMirrorWindows(completion: completion)
+    }
+
+    func openScreenMirroring(_ mode: RememberedMirrorMode) {
+        guard !switchingScreenMirror, adbConnected,
+              mode == .embedded || mode == .native || mode == .scrcpy else { return }
+        switchingScreenMirror = true
+        closeScreenMirroring { [self] in
+            switchingScreenMirror = false
+            guard adbConnected, let device else { return }
+            switch mode {
+            case .embedded: isSidebarMirroring = true
+            case .native: isNativeMirroring = true
+            case .scrcpy:
+                ADBConnector.startScrcpy(ip: adbConnectedIP, port: adbPort, deviceName: device.name)
+            default: break
+            }
+        }
+    }
+
     private func restoreRememberedMirroringIfReady() {
         guard UserDefaults.standard.bool(forKey: "rememberMirroringOnReconnect"),
               !restoredMirrorForConnection, adbConnected, isPlus,
