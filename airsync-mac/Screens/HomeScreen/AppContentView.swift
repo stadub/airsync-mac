@@ -140,7 +140,7 @@ struct AppContentView: View {
             }
         )
         .tabViewStyle(.automatic)
-        .frame(minWidth: 550, minHeight: 510)
+        .frame(minWidth: 300, minHeight: 510)
         .onAppear {
             // Ensure the correct tab is selected when the view appears
             if appState.device == nil {
