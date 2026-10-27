@@ -32,6 +32,15 @@ struct ADBConnector {
         !window.arguments.contains(where: { $0.hasPrefix("--new-display") || $0.hasPrefix("--start-app=") })
     }
 
+    private static func updateScreenMirrorState() {
+        DispatchQueue.main.async {
+            mirrorLock.lock()
+            let count = mirrorWindows.values.filter { $0.process.isRunning && isScreenMirror($0) }.count
+            mirrorLock.unlock()
+            AppState.shared.externalScreenMirrorCount = count
+        }
+    }
+
     static func closeScreenMirrorWindows(completion: @escaping () -> Void = {}) {
         mirrorLock.lock()
         let windows = mirrorWindows.values.filter { $0.process.isRunning && isScreenMirror($0) }
@@ -42,6 +51,7 @@ struct ADBConnector {
                 if window.process.isRunning { window.process.terminate() }
                 window.process.waitUntilExit()
             }
+            updateScreenMirrorState()
             DispatchQueue.main.async { completion() }
         }
     }
@@ -91,10 +101,12 @@ struct ADBConnector {
             mirrorWindows.removeValue(forKey: process.processIdentifier)
             let intentional = restartingWindows.remove(process.processIdentifier) != nil
             mirrorLock.unlock()
+            updateScreenMirrorState()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? ""
             DispatchQueue.main.async {
                 KeyboardLayoutSync.shared.remove(processID: process.processIdentifier)
+                MirrorWindowControls.shared.removeExternal(processID: process.processIdentifier)
                 guard !intentional else { return }
                 AppState.shared.adbConnectionResult = "scrcpy exited:\n" + output
                 if process.terminationStatus != 0 {
@@ -113,10 +125,46 @@ struct ADBConnector {
         catch { mirrorLock.unlock(); throw error }
         mirrorWindows[task.processIdentifier] = MirrorWindow(process: task, executable: executable, arguments: arguments, environment: environment, serial: serial, followKeyboard: followKeyboard)
         mirrorLock.unlock()
+        updateScreenMirrorState()
+        if !arguments.contains(where: { $0.hasPrefix("--new-display") || $0.hasPrefix("--start-app=") }) {
+            DispatchQueue.main.async { MirrorWindowControls.shared.addExternal(process: task, serial: serial) }
+        }
         if followKeyboard, let adbPath = environment?["ADB"] {
             DispatchQueue.main.async {
                 guard task.isRunning else { return }
                 KeyboardLayoutSync.shared.register(process: task, adbPath: adbPath, serial: serial)
+            }
+        }
+    }
+
+    static func performMirrorControl(_ action: EmbeddedNavigationAction, serial: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let adb = findExecutable(named: "adb", fallbackPaths: possibleADBPaths) else { return }
+            func run(_ args: [String]) -> String {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: adb)
+                task.arguments = ["-s", serial, "shell"] + args
+                let pipe = Pipe()
+                task.standardOutput = pipe
+                task.standardError = FileHandle.nullDevice
+                do {
+                    try task.run()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    task.waitUntilExit()
+                    return String(data: data, encoding: .utf8) ?? ""
+                } catch { return "" }
+            }
+            if let keycode = action.keycode { _ = run(["input", "keyevent", String(keycode)]) }
+            else {
+                switch action {
+                case .notifications: _ = run(["cmd", "statusbar", "expand-notifications"])
+                case .quickSettings: _ = run(["cmd", "statusbar", "expand-settings"])
+                case .collapsePanels: _ = run(["cmd", "statusbar", "collapse"])
+                case .rotateDevice:
+                    let current = Int(run(["settings", "get", "system", "user_rotation"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+                    _ = run(["wm", "user-rotation", "lock", String((current + 1) % 4)])
+                default: break
+                }
             }
         }
     }
@@ -688,6 +736,11 @@ struct ADBConnector {
                         let serial = wiredAdbEnabled ? (serialToUse ?? fullAddress) : fullAddress
                         try launchMirrorWindow(executable: scrcpyPath, arguments: args, environment: environment,
                                                serial: serial, followKeyboard: followMacKeyboard)
+                        if package == nil {
+                            DispatchQueue.main.async {
+                                AppState.shared.rememberMirrorMode(desktop == true ? .scrcpyDesktop : .scrcpy)
+                            }
+                        }
                     } catch {
                         DispatchQueue.main.async {
                             AppState.shared.adbConnectionResult = "Failed to start scrcpy: \(error.localizedDescription)"
