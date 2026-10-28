@@ -312,8 +312,13 @@ struct PhoneMirrorHeader: View {
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
                     let name = appState.device?.name ?? "AirSync"
-                    Text(name.count > 16 ? String(name.prefix(16)) + "..." : name)
-                        .font(.title3).help(name)
+                    if let dragWindow {
+                        MirrorNameDragLabel(name: name.count > 16 ? String(name.prefix(16)) + "..." : name, mirror: dragWindow)
+                            .frame(width: 140, height: 28)
+                    } else {
+                        Text(name.count > 16 ? String(name.prefix(16)) + "..." : name)
+                            .font(.title3).help(name)
+                    }
                     if showsMirrorControls {
                         ForEach(orderedHeaderActions.filter { EmbeddedHeaderAction.selected(in: headerVisible).contains($0) }) { action in
                             headerButton(action)
