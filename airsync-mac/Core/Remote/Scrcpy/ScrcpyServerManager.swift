@@ -186,6 +186,7 @@ class ScrcpyServerManager: NSObject {
     
     func stopServer() {
         if let process = adbProcess {
+            DispatchQueue.main.async { KeyboardLayoutSync.shared.remove(processID: process.processIdentifier) }
             if let pipe = process.standardOutput as? Pipe {
                 pipe.fileHandleForReading.readabilityHandler = nil
             }
@@ -256,7 +257,11 @@ class ScrcpyServerManager: NSObject {
                         ScrcpyVideoDecoder.shared.decodePacket(data: data, isConfig: isConfig, pts: pts)
                     }
                     streamClient.connect()
-                    ScrcpyControlClient.shared.connect()
+                    ScrcpyControlClient.shared.connect(onKeyboardReady: { [weak self] in
+                        guard let process = self?.adbProcess else { return }
+                        let adbPath = ADBConnector.findExecutable(named: "adb", fallbackPaths: ADBConnector.possibleADBPaths) ?? "/opt/homebrew/bin/adb"
+                        KeyboardLayoutSync.shared.register(process: process, adbPath: adbPath, serial: serial)
+                    })
                     completion(true, nil)
                 }
             }

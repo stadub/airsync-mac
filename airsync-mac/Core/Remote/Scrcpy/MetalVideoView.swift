@@ -29,7 +29,65 @@ struct MetalVideoView: NSViewRepresentable {
     class ScrcpyMTKView: MTKView {
         var streamClient: ScrcpyStreamClient?
         
+        private var keyboardMonitor: Any?
+        private var windowFocusObserver: NSObjectProtocol?
+        private var routesKeyboardToPhone = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor = keyboardMonitor {
+                NSEvent.removeMonitor(monitor)
+                keyboardMonitor = nil
+            }
+            if let observer = windowFocusObserver {
+                NotificationCenter.default.removeObserver(observer)
+                windowFocusObserver = nil
+            }
+            guard let window else { return }
+            windowFocusObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.releasePhoneKeyboard() }
+            routesKeyboardToPhone = false
+            // SwiftUI may restore its search field as first responder after a tap.
+            // Track explicit clicks instead of relying on that responder identity.
+            keyboardMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .keyUp, .flagsChanged]
+            ) { [weak self] event in
+                guard let self, let window = self.window else { return event }
+                if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) {
+                    let point = self.convert(event.locationInWindow, from: nil)
+                    self.routesKeyboardToPhone = event.window === window
+                        && !self.isHiddenOrHasHiddenAncestor
+                        && self.visibleRect.contains(point)
+                    if !self.routesKeyboardToPhone { ScrcpyControlClient.shared.releaseKeyboardKeys() }
+                    if self.routesKeyboardToPhone {
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self, self.routesKeyboardToPhone else { return }
+                            self.window?.makeFirstResponder(self)
+                        }
+                    }
+                    return event
+                }
+                guard self.routesKeyboardToPhone, window.isKeyWindow,
+                      event.window === window, !self.isHiddenOrHasHiddenAncestor else { return event }
+                // Keep the standard Mac quit command available.
+                if event.modifierFlags.contains(.command), event.keyCode == 12 { return event }
+                if event.type == .keyDown { self.keyDown(with: event) }
+                else if event.type == .flagsChanged { self.flagsChanged(with: event) }
+                else { self.keyUp(with: event) }
+                return nil
+            }
+        }
+
+        deinit {
+            if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
+            if let observer = windowFocusObserver { NotificationCenter.default.removeObserver(observer) }
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
         override func mouseDown(with event: NSEvent) {
+            routesKeyboardToPhone = true
             window?.makeFirstResponder(self)
             sendTouchEvent(action: 0, event: event)
         }
@@ -38,6 +96,8 @@ struct MetalVideoView: NSViewRepresentable {
         
         // Keyboard event handling
         override func keyDown(with event: NSEvent) {
+            if event.isARepeat && ScrcpyControlClient.shared.hasHardwareKeyboard { return } // UHID generates held-key repeat.
+            if ScrcpyControlClient.shared.sendHardwareKey(macKeycode: event.keyCode, down: true, modifiers: hidModifiers(event.modifierFlags)) { return }
             if let keycode = androidKeycode(for: event.keyCode) {
                 var metaState: UInt32 = 0
                 let flags = event.modifierFlags
@@ -56,12 +116,13 @@ struct MetalVideoView: NSViewRepresentable {
                 }
                 
                 ScrcpyControlClient.shared.sendKeyEvent(action: 0, keycode: keycode, metaState: metaState)
-            } else {
+            } else if !routesKeyboardToPhone {
                 super.keyDown(with: event)
             }
         }
         
         override func keyUp(with event: NSEvent) {
+            if ScrcpyControlClient.shared.sendHardwareKey(macKeycode: event.keyCode, down: false, modifiers: hidModifiers(event.modifierFlags)) { return }
             if let keycode = androidKeycode(for: event.keyCode) {
                 var metaState: UInt32 = 0
                 let flags = event.modifierFlags
@@ -80,11 +141,40 @@ struct MetalVideoView: NSViewRepresentable {
                 }
                 
                 ScrcpyControlClient.shared.sendKeyEvent(action: 1, keycode: keycode, metaState: metaState)
-            } else {
+            } else if !routesKeyboardToPhone {
                 super.keyUp(with: event)
             }
         }
         
+        private func releasePhoneKeyboard() {
+            routesKeyboardToPhone = false
+            ScrcpyControlClient.shared.releaseKeyboardKeys()
+        }
+
+        override func flagsChanged(with event: NSEvent) {
+            let modifiers = hidModifiers(event.modifierFlags)
+            if event.keyCode == 57 { // Caps Lock changes state rather than delivering keyDown.
+                _ = ScrcpyControlClient.shared.sendHardwareKey(macKeycode: 57, down: true, modifiers: modifiers)
+                _ = ScrcpyControlClient.shared.sendHardwareKey(macKeycode: 57, down: false, modifiers: modifiers)
+            } else {
+                ScrcpyControlClient.shared.sendKeyboardModifiers(modifiers)
+            }
+        }
+
+        private func hidModifiers(_ flags: NSEvent.ModifierFlags) -> UInt8 {
+            var value: UInt8 = 0
+            if flags.contains(.shift) { value |= 2 }
+            if flags.contains(.option) { value |= 4 }
+            if UserDefaults.standard.swapCmdAndCtrl {
+                if flags.contains(.command) { value |= 1 }
+                if flags.contains(.control) { value |= 8 }
+            } else {
+                if flags.contains(.control) { value |= 1 }
+                if flags.contains(.command) { value |= 8 }
+            }
+            return value
+        }
+
         private func androidKeycode(for macKeycode: UInt16) -> UInt32? {
             let swap = UserDefaults.standard.swapCmdAndCtrl
             switch macKeycode {

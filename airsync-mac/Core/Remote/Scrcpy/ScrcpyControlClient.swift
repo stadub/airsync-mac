@@ -12,9 +12,14 @@ class ScrcpyControlClient {
     static let shared = ScrcpyControlClient()
     
     private var connection: NWConnection?
+    private var keyboard: EmbeddedHIDKeyboard?
+    var hasHardwareKeyboard: Bool { keyboard != nil }
+    private var connectionGeneration = UUID()
     private let queue = DispatchQueue(label: "com.sameerasw.airsync.scrcpy.control")
     
-    func connect(host: String = "127.0.0.1", port: UInt16 = 1234) {
+    func connect(host: String = "127.0.0.1", port: UInt16 = 1234, onKeyboardReady: (() -> Void)? = nil) {
+        let generation = UUID()
+        connectionGeneration = generation
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(integerLiteral: port))
         let connection = NWConnection(to: endpoint, using: .tcp)
         
@@ -22,6 +27,14 @@ class ScrcpyControlClient {
             switch state {
             case .ready:
                 print("[ScrcpyControlClient] Control channel ready")
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.connectionGeneration == generation else { return }
+                    if UserDefaults.standard.object(forKey: "followMacKeyboardLayout") as? Bool ?? true {
+                        self.keyboard = EmbeddedHIDKeyboard()
+                        self.send(data: EmbeddedHIDKeyboard.createMessage())
+                        onKeyboardReady?()
+                    }
+                }
             case .failed(let error):
                 print("[ScrcpyControlClient] Control channel failed: \(error)")
             default:
@@ -34,10 +47,27 @@ class ScrcpyControlClient {
     }
     
     func disconnect() {
+        releaseKeyboardKeys()
+        keyboard = nil
+        connectionGeneration = UUID()
         connection?.cancel()
         connection = nil
     }
     
+    func sendHardwareKey(macKeycode: UInt16, down: Bool, modifiers: UInt8) -> Bool {
+        guard keyboard != nil, let data = keyboard?.key(macKeycode: macKeycode, down: down, modifiers: modifiers) else { return false }
+        send(data: data)
+        return true
+    }
+
+    func sendKeyboardModifiers(_ modifiers: UInt8) {
+        if let data = keyboard?.report(modifiers: modifiers) { send(data: data) }
+    }
+
+    func releaseKeyboardKeys() {
+        if let data = keyboard?.releaseAll() { send(data: data) }
+    }
+
     func sendTouchEvent(action: UInt8, x: UInt32, y: UInt32, width: UInt16, height: UInt16) {
         var data = Data()
         data.append(2) // Type 2: Inject touch event
