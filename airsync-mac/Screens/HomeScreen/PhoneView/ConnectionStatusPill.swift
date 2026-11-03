@@ -12,19 +12,63 @@ struct ConnectionStatusPill: View {
     @ObservedObject var bleManager = BLECentralManager.shared
     @State private var showingPopover = false
     @State private var isHovered = false
-    
+    @ObservedObject private var quickShareManager = QuickShareManager.shared
+    @State private var expanded = false
+    var expandable = false
+    var useGlass = true
+    var showWiFi = true
+    var showStatuses = true
+
     var body: some View {
-        Button(action: {
-            showingPopover.toggle()
-        }) {
-            HStack(spacing: 8) {
-                // Network Connection Icon
-                if let ip = appState.device?.ipAddress, ip != "BLE" {
-                    Image(systemName: appState.isConnectedOverLocalNetwork ? "wifi" : "globe")
-                        .contentTransition(.symbolEffect(.replace))
-                        .help(appState.isConnectedOverLocalNetwork ? "Local WiFi" : "Extended Connection (Tailscale)")
+        HStack(spacing: 8) {
+            Button { showingPopover.toggle() } label: {
+                HStack(spacing: 8) {
+                    if showWiFi {
+                        Image(systemName: appState.isConnectedOverLocalNetwork ? "wifi" : "globe")
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    if !expandable && showStatuses { statusIcons }
                 }
-                
+                .contentShape(Rectangle())
+            }
+            .help("Connection details")
+            .accessibilityLabel("Connection details")
+            .popover(isPresented: $showingPopover, arrowEdge: .top) { ConnectionPillPopover() }
+
+            if expandable {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .focusable(false)
+                .help(expanded ? "Hide connection status" : "Show connection status")
+                .accessibilityLabel(expanded ? "Hide connection status" : "Show connection status")
+                if expanded {
+                    statusIcons
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    Divider().frame(height: 20)
+                    PhoneQuickActionsView(compact: true)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, useGlass ? 10 : 0)
+        .padding(.vertical, useGlass ? 6 : 0)
+        .applyGlassViewIfAvailable(enabled: useGlass)
+        .fixedSize(horizontal: true, vertical: false)
+        .scaleEffect(isHovered ? 1.05 : 1.0)
+        .onHover { isHovered = $0 }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: appState.adbConnected)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: appState.adbConnectionMode)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bleManager.connectionStatus)
+    }
+
+    @ViewBuilder
+    private var statusIcons: some View {
                 if appState.isPlus {
                     if appState.adbConnecting {
                         ProgressView()
@@ -71,29 +115,8 @@ struct ConnectionStatusPill: View {
                             removal: .opacity
                         ))
                 }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .applyGlassViewIfAvailable()
-            .scaleEffect(isHovered ? 1.05 : 1.0)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: appState.adbConnected)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: appState.adbConnectionMode)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: appState.isConnectedOverLocalNetwork)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: QuickShareManager.shared.isRunning)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bleManager.connectionStatus)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                isHovered = hovering
-            }
-        }
-        .popover(isPresented: $showingPopover, arrowEdge: .top) {
-            ConnectionPillPopover()
-        }
     }
-    
+
     private var adbModeIcon: String {
         switch appState.adbConnectionMode {
         case .wired:

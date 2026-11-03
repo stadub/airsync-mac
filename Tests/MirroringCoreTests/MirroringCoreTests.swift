@@ -54,7 +54,13 @@ final class MirroringCoreTests: XCTestCase {
         XCTAssertEqual(disconnected.candidatePorts, ["39000"])
     }
 
-
+    func testLayoutNormalizesAndMovesMultipleRows() {
+        var layout = MirrorButtonLayout(actions: ["a", "b", "c", "d"], order: "c,c,removed,a", visible: "removed,c,b")
+        XCTAssertEqual(layout.order, ["c", "a", "b", "d"])
+        layout.move(from: IndexSet([0, 2]), to: 4)
+        XCTAssertEqual(layout.order, ["a", "d", "c", "b"])
+        XCTAssertEqual(layout.savedVisible, "c,b")
+    }
 
     func testCloseDuringAudioRestartDoesNotRelaunch() {
         let launched = expectation(description: "launched")

@@ -37,82 +37,7 @@ struct ScreenView: View {
 
 
             if appState.device != nil {
-                HStack(spacing: 10){
-                    GlassButtonView(
-                        label: "Send",
-                        systemImage: "square.and.arrow.up",
-                        iconOnly: true,
-                        fixedIconSize: 16,
-                        action: {
-                            let panel = NSOpenPanel()
-                            panel.allowsMultipleSelection = true
-                            panel.canChooseDirectories = false
-                            panel.canChooseFiles = true
-                            
-                            if panel.runModal() == .OK {
-                                QuickShareManager.shared.transferURLs = panel.urls
-                                QuickShareManager.shared.startDiscovery()
-                                appState.showingQuickShareTransfer = true
-                            }
-                        }
-                    )
-                    .help("Send Files")
-                    .transition(.identity)
-                    .keyboardShortcut(
-                        "f",
-                        modifiers: .command
-                     )
-
-                    if appState.device?.ipAddress != "BLE" {
-                        GlassButtonView(
-                            label: "Browse",
-                            systemImage: "folder",
-                            iconOnly: true,
-                            fixedIconSize: 16,
-                            action: {
-                                if appState.isPlus && appState.licenseCheck {
-                                    appState.openFileBrowser()
-                                } else {
-                                    showingPlusPopover = true
-                                }
-                            }
-                        )
-                        .help("Browse Files")
-                        .transition(.identity)
-                        .keyboardShortcut(
-                            "b",
-                            modifiers: .command
-                        )
-                        .popover(isPresented: $showingPlusPopover, arrowEdge: .bottom) {
-                            PlusFeaturePopover(message: "Browse files with AirSync+")
-                        }
-                    }
-
-                    GlassButtonView(
-                        label: "Mute",
-                        systemImage: appState.silenceAllNotifications ? "bell.slash.fill" : "bell.badge",
-                        iconOnly: true,
-                        fixedIconSize: 16,
-                        action: {
-                            appState.silenceAllNotifications.toggle()
-                        }
-                    )
-                    .help(appState.silenceAllNotifications ? "Unmute Notifications" : "Mute Notifications")
-                    .transition(.identity)
-
-                    GlassButtonView(
-                        label: "Clipboard",
-                        systemImage: "clipboard",
-                        iconOnly: true,
-                        fixedIconSize: 16,
-                        action: {
-                            sendClipboard()
-                        }
-                    )
-                    .help("Send Clipboard")
-                    .transition(.identity)
-
-                }
+                PhoneQuickActionsView()
             }
             if (appState.status != nil){
                 DeviceStatusView()
@@ -141,6 +66,111 @@ struct ScreenView: View {
         )
     }
 
+
+}
+
+#Preview {
+    ScreenView()
+}
+
+/// The phone card's existing actions, also available above embedded mirroring.
+enum PhoneQuickAction: String, CaseIterable {
+    case sendFiles, browseFiles, muteNotifications, clipboard
+}
+
+struct PhoneQuickActionsView: View {
+    @ObservedObject var appState = AppState.shared
+    @State private var showingPlusPopover = false
+    var compact = false
+    var actions = Set(PhoneQuickAction.allCases)
+
+    var body: some View {
+                HStack(spacing: compact ? 6 : 10){
+                    if actions.contains(.sendFiles) {
+                    GlassButtonView(
+                        label: "Send",
+                        systemImage: "square.and.arrow.up",
+                        iconOnly: true,
+                        circleSize: compact ? 24 : nil,
+                        fixedIconSize: 16,
+                        action: {
+                            let panel = NSOpenPanel()
+                            panel.allowsMultipleSelection = true
+                            panel.canChooseDirectories = false
+                            panel.canChooseFiles = true
+                            
+                            if panel.runModal() == .OK {
+                                QuickShareManager.shared.transferURLs = panel.urls
+                                QuickShareManager.shared.startDiscovery()
+                                appState.showingQuickShareTransfer = true
+                            }
+                        }
+                    )
+                    .help("Send Files")
+                    .transition(.identity)
+                    .keyboardShortcut(
+                        "f",
+                        modifiers: .command
+                     )
+
+                    }
+                    if actions.contains(.browseFiles), appState.device?.ipAddress != "BLE" {
+                        GlassButtonView(
+                            label: "Browse",
+                            systemImage: "folder",
+                            iconOnly: true,
+                            circleSize: compact ? 24 : nil,
+                        fixedIconSize: 16,
+                            action: {
+                                if appState.isPlus && appState.licenseCheck {
+                                    appState.openFileBrowser()
+                                } else {
+                                    showingPlusPopover = true
+                                }
+                            }
+                        )
+                        .help("Browse Files")
+                        .transition(.identity)
+                        .keyboardShortcut(
+                            "b",
+                            modifiers: .command
+                        )
+                        .popover(isPresented: $showingPlusPopover, arrowEdge: .bottom) {
+                            PlusFeaturePopover(message: "Browse files with AirSync+")
+                        }
+                    }
+
+                    if actions.contains(.muteNotifications) {
+                    GlassButtonView(
+                        label: "Mute",
+                        systemImage: appState.silenceAllNotifications ? "bell.slash.fill" : "bell.badge",
+                        iconOnly: true,
+                        circleSize: compact ? 24 : nil,
+                        fixedIconSize: 16,
+                        action: {
+                            appState.silenceAllNotifications.toggle()
+                        }
+                    )
+                    .help(appState.silenceAllNotifications ? "Unmute Notifications" : "Mute Notifications")
+                    .transition(.identity)
+
+                    }
+                    if actions.contains(.clipboard) {
+                    GlassButtonView(
+                        label: "Clipboard",
+                        systemImage: "clipboard",
+                        iconOnly: true,
+                        circleSize: compact ? 24 : nil,
+                        fixedIconSize: 16,
+                        action: {
+                            sendClipboard()
+                        }
+                    )
+                    .help("Send Clipboard")
+                    .transition(.identity)
+                    }
+                }
+    }
     private func sendClipboard() {
         let pasteboard = NSPasteboard.general
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], let firstUrl = urls.first {
@@ -174,8 +204,4 @@ struct ScreenView: View {
             appState.sendClipboardToAndroid(text: text)
         }
     }
-}
-
-#Preview {
-    ScreenView()
 }

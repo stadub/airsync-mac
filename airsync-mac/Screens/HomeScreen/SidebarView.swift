@@ -6,34 +6,25 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct SidebarView: View {
     @ObservedObject var appState = AppState.shared
     @ObservedObject var discoveryManager = DiscoveryManager.shared
     @State private var isExpandedAllSeas: Bool = false
     @State private var showingPlusDesktopPopover = false
+    private var preferredMirrorTitle: String {
+        switch appState.preferredScreenMirrorMode {
+        case .embedded: return "Mirror Here"
+        case .native: return "Android Mirror"
+        case .scrcpy: return "scrcpy Mirror"
+        default: return "Mirror"
+        }
+    }
 
     var body: some View {
         VStack {
-            HStack(alignment: .center, spacing: 8) {
-                let name = appState.device?.name ?? "AirSync"
-                let truncated = name.count > 16
-                ? String(name.prefix(16)) + "..."
-                : name
-
-                Text(truncated)
-                    .font(.title3)
-
-                if let wifiDevice = discoveryManager.availableWifiDeviceForCurrentBLE {
-                    GlassButtonView(
-                        label: "Switch",
-                        systemImage: "wifi",
-                        action: {
-                            QuickConnectManager.shared.connect(to: wifiDevice)
-                        }
-                    )
-                }
-            }
+            PhoneMirrorHeader(showsMirrorControls: appState.isSidebarMirroring).padding(.horizontal, 8)
 
             if let deviceVersion = appState.device?.version,
                appState.device?.ipAddress != "BLE",
@@ -56,65 +47,25 @@ struct SidebarView: View {
             if appState.adbConnected {
                 HStack(spacing: 12) {
                     Menu {
-                        // 1. Default mirror action
-                        if appState.useNativeMirroringByDefault {
-                            Button("Android Mirror") {
-                                appState.isNativeMirroring = true
-                            }
-                            .appShortcut(AppShortcuts.mirrorPrimary, appState: appState)
-                        } else {
-                            Button("scrcpy Mirror") {
-                                ADBConnector.startScrcpy(
-                                    ip: appState.device?.ipAddress ?? "",
-                                    port: appState.adbPort,
-                                    deviceName: appState.device?.name ?? "My Phone"
-                                )
-                            }
-                            .appShortcut(AppShortcuts.mirrorPrimary, appState: appState)
+                        Button("Mirror Here", systemImage: "iphone") { appState.openScreenMirroring(.embedded) }
+                            .appShortcut(AppShortcuts.mirrorHere, appState: appState)
+                        Button("Android Mirror", systemImage: "macwindow") { appState.openScreenMirroring(.native) }
+                        Button("scrcpy Mirror", systemImage: "rectangle.on.rectangle") { appState.openScreenMirroring(.scrcpy) }
+                        if appState.isScreenMirroring {
+                            Divider()
+                            Button("Close Mirror", systemImage: "xmark.circle") { appState.closeScreenMirroring() }
                         }
-
-                        // 2. Alternative mirror action
-                        if appState.useNativeMirroringByDefault {
-                            Button("scrcpy Mirror") {
-                                ADBConnector.startScrcpy(
-                                    ip: appState.device?.ipAddress ?? "",
-                                    port: appState.adbPort,
-                                    deviceName: appState.device?.name ?? "My Phone"
-                                )
-                            }
-                            .appShortcut(AppShortcuts.mirrorAlternate, appState: appState)
-                        } else {
-                            Button("Android Mirror") {
-                                appState.isNativeMirroring = true
-                            }
-                            .appShortcut(AppShortcuts.mirrorAlternate, appState: appState)
-                        }
-
-                        Button(appState.isSidebarMirroring ? "Stop Mirroring Here" : "Mirror Here") {
-                            appState.isSidebarMirroring.toggle()
-                        }
-                        .appShortcut(AppShortcuts.mirrorHere, appState: appState)
                     } label: {
-                        if appState.isSidebarMirroring {
-                            Label("Close", systemImage: "xmark.circle")
-                        } else {
-                            Label("Mirror", systemImage: "apps.iphone")
-                        }
+                        Label(appState.isScreenMirroring ? "Close" : preferredMirrorTitle,
+                              systemImage: appState.isScreenMirroring ? "xmark.circle" : "apps.iphone")
                     } primaryAction: {
-                        if appState.isSidebarMirroring {
-                            appState.isSidebarMirroring = false
+                        if appState.isScreenMirroring {
+                            appState.closeScreenMirroring()
                         } else {
-                            if appState.useNativeMirroringByDefault {
-                                appState.isNativeMirroring = true
-                            } else {
-                                ADBConnector.startScrcpy(
-                                    ip: appState.device?.ipAddress ?? "",
-                                    port: appState.adbPort,
-                                    deviceName: appState.device?.name ?? "My Phone"
-                                )
-                            }
+                            appState.openScreenMirroring(appState.preferredScreenMirrorMode)
                         }
                     }
+                    .disabled(appState.switchingScreenMirror)
                     .menuStyle(.button)
                     .controlSize(.large)
                     .glassButtonIfAvailable()
@@ -123,7 +74,7 @@ struct SidebarView: View {
 
                     Menu {
                         if appState.useNativeDesktopMirroringByDefault {
-                            Button("Native Desktop") {
+                            Button("Native Desktop", systemImage: "desktopcomputer") {
                                 if appState.isPlus && appState.licenseCheck {
                                     appState.isNativeDesktopMirroring = true
                                 } else {
@@ -132,7 +83,7 @@ struct SidebarView: View {
                             }
                             .appShortcut(AppShortcuts.desktopPrimary, appState: appState)
 
-                            Button("scrcpy Desktop") {
+                            Button("scrcpy Desktop", systemImage: "display") {
                                 if appState.isPlus && appState.licenseCheck {
                                     ADBConnector.startScrcpy(
                                         ip: appState.device?.ipAddress ?? "",
@@ -146,7 +97,7 @@ struct SidebarView: View {
                             }
                             .appShortcut(AppShortcuts.desktopAlternate, appState: appState)
                         } else {
-                            Button("scrcpy Desktop") {
+                            Button("scrcpy Desktop", systemImage: "display") {
                                 if appState.isPlus && appState.licenseCheck {
                                     ADBConnector.startScrcpy(
                                         ip: appState.device?.ipAddress ?? "",
@@ -160,7 +111,7 @@ struct SidebarView: View {
                             }
                             .appShortcut(AppShortcuts.desktopPrimary, appState: appState)
 
-                            Button("Native Desktop") {
+                            Button("Native Desktop", systemImage: "desktopcomputer") {
                                 if appState.isPlus && appState.licenseCheck {
                                     appState.isNativeDesktopMirroring = true
                                 } else {

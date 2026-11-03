@@ -66,7 +66,7 @@ struct SidebarMirrorView: View {
             }
         }
     }
-    
+
     private func stopMirroring() {
         ScrcpyServerManager.shared.stopMirroringSession(streamClient: streamClient)
         isMirroring = false

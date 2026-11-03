@@ -10,6 +10,7 @@ import AppKit
 
 struct HomeView: View {
     @ObservedObject var appState = AppState.shared
+    @ObservedObject private var mirrorStreamClient = ScrcpyStreamClient.shared
     @State private var targetOpacity: Double = 0
     @AppStorage("hasPairedDeviceOnce") private var hasPairedDeviceOnce: Bool = false
     @State var showOnboarding = false
@@ -23,61 +24,76 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ZStack {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                ZStack {
-                    if appState.selectedTab == .settings {
-                        SettingsSidebarView()
-                    } else if appState.device == nil {
-                        QRScannerSidebarView()
-                    } else {
-                        SidebarView()
+        GeometryReader { geometry in
+            ZStack {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    ZStack {
+                        if appState.selectedTab == .settings {
+                            SettingsSidebarView()
+                        } else if appState.device == nil {
+                            QRScannerSidebarView()
+                        } else {
+                            SidebarView()
+                        }
+                    }
+                    .frame(minWidth: sidebarWidth(in: geometry.size))
+                    .navigationSplitViewColumnWidth(
+                        min: sidebarWidth(in: geometry.size),
+                        ideal: sidebarWidth(in: geometry.size),
+                        max: max(270, geometry.size.width * 0.45)
+                    )
+                } detail: {
+                    AppContentView()
+                }
+                .navigationTitle("")
+                .background(.background.opacity(appState.windowOpacity))
+                .toolbarBackground(
+                    .clear,
+                    for: .windowToolbar
+                )
+                // Show onboarding sheet when needed
+                .onAppear {
+                    if needsOnboarding {
+                        showOnboarding = true
+                        appState.isOnboardingActive = true
+                    }
+                    updateSidebarVisibility()
+                }
+                .onChange(of: appState.device) { _, _ in
+                    updateSidebarVisibility()
+                }
+                .sheet(isPresented: $showOnboarding) {
+                    OnboardingView()
+                        .frame(minWidth: 640, minHeight: 420)
+                }
+                .onChange(of: showOnboarding) { oldValue, newValue in
+                    if !newValue {
+                        appState.isOnboardingActive = false
                     }
                 }
-                .frame(minWidth: 270)
-            } detail: {
-                AppContentView()
-            }
-            .navigationTitle("")
-            .background(.background.opacity(appState.windowOpacity))
-            .toolbarBackground(
-                .clear,
-                for: .windowToolbar
-            )
-            // Show onboarding sheet when needed
-            .onAppear {
-                if needsOnboarding {
-                    showOnboarding = true
-                    appState.isOnboardingActive = true
+                .onChange(of: appState.isOnboardingActive) { oldValue, newValue in
+                    // Force view update to refresh window properties
                 }
-                updateSidebarVisibility()
-            }
-            .onChange(of: appState.device) { _, _ in
-                updateSidebarVisibility()
-            }
-            .sheet(isPresented: $showOnboarding) {
-                OnboardingView()
-                    .frame(minWidth: 640, minHeight: 420)
-            }
-            .onChange(of: showOnboarding) { oldValue, newValue in
-                if !newValue {
-                    appState.isOnboardingActive = false
-                }
-            }
-            .onChange(of: appState.isOnboardingActive) { oldValue, newValue in
-                // Force view update to refresh window properties
-            }
 
-            if appState.isConnectionWeak && appState.device != nil {
-                VStack {
-                    Spacer()
-                    ConnectionWeakOverlay(appState: appState)
-                        .padding(.bottom, 20)
+                if appState.isConnectionWeak && appState.device != nil {
+                    VStack {
+                        Spacer()
+                        ConnectionWeakOverlay(appState: appState)
+                            .padding(.bottom, 20)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
+    }
+
+    private func sidebarWidth(in size: CGSize) -> CGFloat {
+        guard appState.isSidebarMirroring, appState.selectedTab != .settings else { return 270 }
+        let ratio: CGFloat = mirrorStreamClient.videoWidth > 0 && mirrorStreamClient.videoHeight > 0
+            ? CGFloat(mirrorStreamClient.videoWidth) / CGFloat(mirrorStreamClient.videoHeight)
+            : 9.0 / 19.5
+        return max(270, min(size.width * 0.42, max(1, size.height - 160) * ratio + 24))
     }
 
     private func updateSidebarVisibility() {

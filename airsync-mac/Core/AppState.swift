@@ -15,6 +15,84 @@ import AVFoundation
 class AppState: ObservableObject {
     static let shared = AppState()
     
+    enum RememberedMirrorMode: String {
+        case embedded, native, scrcpy, nativeDesktop, scrcpyDesktop
+    }
+
+    private var restoredMirrorForConnection = false
+
+    func rememberMirrorMode(_ mode: RememberedMirrorMode) {
+        guard let device, !device.deviceId.isEmpty else { return }
+        var choices = UserDefaults.standard.dictionary(forKey: "lastMirrorModeByDevice") as? [String: String] ?? [:]
+        choices[device.deviceId] = mode.rawValue
+        if mode == .embedded || mode == .native || mode == .scrcpy {
+            var screenChoices = UserDefaults.standard.dictionary(forKey: "lastScreenMirrorModeByDevice") as? [String: String] ?? [:]
+            screenChoices[device.deviceId] = mode.rawValue
+            UserDefaults.standard.set(screenChoices, forKey: "lastScreenMirrorModeByDevice")
+        }
+        UserDefaults.standard.set(choices, forKey: "lastMirrorModeByDevice")
+    }
+
+    @Published var externalScreenMirrorCount = 0
+    @Published private(set) var switchingScreenMirror = false
+
+    var isScreenMirroring: Bool {
+        isSidebarMirroring || isNativeMirroring || externalScreenMirrorCount > 0
+    }
+
+    var preferredScreenMirrorMode: RememberedMirrorMode {
+        if let id = device?.deviceId {
+            for key in ["lastScreenMirrorModeByDevice", "lastMirrorModeByDevice"] {
+                if let choices = UserDefaults.standard.dictionary(forKey: key) as? [String: String],
+                   let raw = choices[id], let mode = RememberedMirrorMode(rawValue: raw),
+                   mode == .embedded || mode == .native || mode == .scrcpy { return mode }
+            }
+        }
+        return useNativeMirroringByDefault ? .native : .scrcpy
+    }
+
+    func closeScreenMirroring(completion: @escaping () -> Void = {}) {
+        isSidebarMirroring = false
+        isNativeMirroring = false
+        ADBConnector.closeScreenMirrorWindows(completion: completion)
+    }
+
+    func openScreenMirroring(_ mode: RememberedMirrorMode) {
+        guard !switchingScreenMirror, adbConnected,
+              mode == .embedded || mode == .native || mode == .scrcpy else { return }
+        switchingScreenMirror = true
+        closeScreenMirroring { [self] in
+            switchingScreenMirror = false
+            guard adbConnected, let device else { return }
+            switch mode {
+            case .embedded: isSidebarMirroring = true
+            case .native: isNativeMirroring = true
+            case .scrcpy:
+                ADBConnector.startScrcpy(ip: adbConnectedIP, port: adbPort, deviceName: device.name)
+            default: break
+            }
+        }
+    }
+
+    private func restoreRememberedMirroringIfReady() {
+        guard UserDefaults.standard.bool(forKey: "rememberMirroringOnReconnect"),
+              !restoredMirrorForConnection, adbConnected, isPlus,
+              let device, device.isRegularConnection,
+              let choices = UserDefaults.standard.dictionary(forKey: "lastMirrorModeByDevice") as? [String: String],
+              let rawMode = choices[device.deviceId],
+              let mode = RememberedMirrorMode(rawValue: rawMode) else { return }
+        // Mark before opening a view so repeated device/status updates cannot reopen it.
+        restoredMirrorForConnection = true
+        switch mode {
+        case .embedded: isSidebarMirroring = true
+        case .native: isNativeMirroring = true
+        case .nativeDesktop: isNativeDesktopMirroring = true
+        case .scrcpy, .scrcpyDesktop:
+            ADBConnector.startScrcpy(ip: adbConnectedIP, port: adbPort,
+                                    deviceName: device.name, desktop: mode == .scrcpyDesktop)
+        }
+    }
+
     enum ADBConnectionMode: String, Codable {
         case wireless
         case wired
@@ -230,6 +308,9 @@ class AppState: ObservableObject {
 
     @Published var device: Device? = nil {
         didSet {
+            if device?.isRegularConnection != true {
+                restoredMirrorForConnection = false
+            }
             // Store the last connected device when a new device connects
             if let newDevice = device {
                 UserDefaults.standard.isManuallyDisconnected = false
@@ -293,6 +374,7 @@ class AppState: ObservableObject {
                 self.bleWakeUpWorkItem = workItem
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: workItem)
             }
+            restoreRememberedMirroringIfReady()
         }
     }
     @Published var notifications: [Notification] = []
@@ -398,6 +480,14 @@ class AppState: ObservableObject {
         didSet {
             if !adbConnected {
                 adbConnectionMode = nil
+                restoredMirrorForConnection = false
+                if UserDefaults.standard.bool(forKey: "rememberMirroringOnReconnect") {
+                    isSidebarMirroring = false
+                    isNativeMirroring = false
+                    isNativeDesktopMirroring = false
+                }
+            } else {
+                restoreRememberedMirroringIfReady()
             }
         }
     }
@@ -412,6 +502,7 @@ class AppState: ObservableObject {
     @Published var isNativeMirroring: Bool = false {
         didSet {
             if isNativeMirroring {
+                rememberMirrorMode(.native)
                 if isSidebarMirroring { isSidebarMirroring = false }
                 if isNativeDesktopMirroring { isNativeDesktopMirroring = false }
             }
@@ -420,6 +511,7 @@ class AppState: ObservableObject {
     @Published var isSidebarMirroring: Bool = false {
         didSet {
             if isSidebarMirroring {
+                rememberMirrorMode(.embedded)
                 if isNativeMirroring { isNativeMirroring = false }
                 if isNativeDesktopMirroring { isNativeDesktopMirroring = false }
             }
@@ -428,6 +520,7 @@ class AppState: ObservableObject {
     @Published var isNativeDesktopMirroring: Bool = false {
         didSet {
             if isNativeDesktopMirroring {
+                rememberMirrorMode(.nativeDesktop)
                 if isNativeMirroring { isNativeMirroring = false }
                 if isSidebarMirroring { isSidebarMirroring = false }
             }
@@ -1951,7 +2044,7 @@ class AppState: ObservableObject {
     
     func startMediaTimer() {
         guard mediaTickTimer == nil else { return }
-        mediaTickTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+        mediaTickTimer = Timer.publish(every: 1.0, on: .main, in: .default)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self = self,

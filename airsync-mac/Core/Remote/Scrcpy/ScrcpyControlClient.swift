@@ -157,6 +157,17 @@ class ScrcpyControlClient {
         return Int16(i)
     }
     
+    enum SystemCommand: UInt8 {
+        case notifications = 5
+        case quickSettings = 6
+        case collapsePanels = 7
+        case rotateDevice = 11
+    }
+
+    func sendSystemCommand(_ command: SystemCommand) {
+        send(data: Data([command.rawValue]))
+    }
+
     func sendResizeDisplay(width: UInt16, height: UInt16) {
         var data = Data()
         data.append(21) // Type 21: Resize display

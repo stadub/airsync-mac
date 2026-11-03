@@ -25,9 +25,22 @@ struct ScrcpyBaseMirrorView: View {
     @State private var isHovering = false
     @State private var currentWindow: NSWindow?
     @State private var isWindowActive = false
-    @State private var navbarController = NavbarWindowController()
     @State private var sideController = SideControlWindowController()
     @AppStorage("showMirrorControls") private var showMirrorControls = true
+
+    @AppStorage("showDesktopMirrorControls") private var showDesktopMirrorControls = true
+    @AppStorage("showEmbeddedMirrorNavigation") private var showPhoneNavigation = true
+    @AppStorage("showDesktopMirrorNavigation") private var showDesktopNavigation = true
+
+    private var controlsVisible: Bool { desktopMode ? showDesktopMirrorControls : showMirrorControls }
+    private var navigationVisible: Bool { desktopMode ? showDesktopNavigation : showPhoneNavigation }
+
+    private func closeMirror() {
+        if desktopMode { appState.isNativeDesktopMirroring = false }
+        else { appState.isNativeMirroring = false }
+        currentWindow?.performClose(nil)
+        dismissWindow(id: windowId)
+    }
 
     private var safeRatio: CGFloat {
         if streamClient.videoWidth > 0 && streamClient.videoHeight > 0 {
@@ -101,7 +114,8 @@ struct ScrcpyBaseMirrorView: View {
                 .ignoresSafeArea()
 
             Button(action: {
-                showMirrorControls.toggle()
+                if desktopMode { showDesktopMirrorControls.toggle() }
+                else { showMirrorControls.toggle() }
             }) {
                 Text("")
             }
@@ -111,24 +125,13 @@ struct ScrcpyBaseMirrorView: View {
             .opacity(0)
 
             VStack(spacing: 0) {
-                if isHovering {
-                    headerView
-                        .frame(height: 36)
+                GeometryReader { geometry in
+                    mainMirrorContent
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                         .clipped()
-                        .transition(.opacity)
-                        .onHover { hovering in
-                            if !hovering {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    isHovering = false
-                                    updateWindowUI(isHovering: false)
-                                }
-                            }
-                        }
                 }
-
-                mainMirrorContent
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                     .animation(.easeInOut(duration: 1.25), value: isMirroring)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(alignment: .top) {
                         if !isHovering {
                             Color.clear
@@ -186,7 +189,7 @@ struct ScrcpyBaseMirrorView: View {
         .frame(minWidth: isDesktopResizeEnabled ? 400 : 200, minHeight: isDesktopResizeEnabled ? 250 : 300)
         .ignoresSafeArea()
         .onDisappear {
-            navbarController.hide()
+            if let window = currentWindow { MirrorWindowControls.shared.removeNative(parent: window) }
             sideController.hide()
             stopMirroring()
         }
@@ -262,6 +265,9 @@ struct ScrcpyBaseMirrorView: View {
 
     private func setupWindow(_ window: NSWindow) {
         self.currentWindow = window
+        // Streaming may start before SwiftUI supplies its hosting window.
+        // Register controls here as well as on streaming-state changes.
+        DispatchQueue.main.async { self.updateNavbarVisibility() }
         window.backgroundColor = NSColor.clear
         window.isOpaque = false
         window.titlebarAppearsTransparent = true
@@ -270,10 +276,10 @@ struct ScrcpyBaseMirrorView: View {
         window.isRestorable = false
         window.level = .floating
 
-        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.closeButton)?.isHidden = false
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
-        window.isMovable = false
+        window.isMovable = true
 
         window.title = isMirroring ? streamClient.deviceName : defaultTitle
 
@@ -291,11 +297,11 @@ struct ScrcpyBaseMirrorView: View {
         }
 
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { _ in
-            navbarController.updatePosition(parent: window)
+            MirrorWindowControls.shared.refresh()
             sideController.updatePosition(parent: window)
         }
         NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { _ in
-            navbarController.updatePosition(parent: window)
+            MirrorWindowControls.shared.refresh()
             sideController.updatePosition(parent: window)
             
             if isDesktopResizeEnabled, let contentView = window.contentView {
@@ -317,9 +323,9 @@ struct ScrcpyBaseMirrorView: View {
 
     private func updateWindowUI(isHovering: Bool) {
         guard let window = currentWindow else { return }
-        window.isMovable = isHovering
+        window.isMovable = true
 
-        window.standardWindowButton(.closeButton)?.isHidden = !isHovering
+        window.standardWindowButton(.closeButton)?.isHidden = false
         window.standardWindowButton(.miniaturizeButton)?.isHidden = !isHovering
         window.standardWindowButton(.zoomButton)?.isHidden = true
     }
@@ -348,11 +354,10 @@ struct ScrcpyBaseMirrorView: View {
 
     private func updateNavbarVisibility() {
         guard let window = currentWindow else { return }
-        if isWindowActive && isMirroring && showMirrorControls {
-            navbarController.show(parent: window, isMirroring: isMirroring)
+        MirrorWindowControls.shared.updateNative(parent: window, isMirroring: isMirroring, showsControls: controlsVisible, desktopMode: desktopMode)
+        if isWindowActive && isMirroring && controlsVisible {
             sideController.show(parent: window, isMirroring: isMirroring)
         } else {
-            navbarController.hide()
             sideController.hide()
         }
     }
