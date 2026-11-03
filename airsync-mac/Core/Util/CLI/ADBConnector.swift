@@ -181,8 +181,12 @@ struct ADBConnector {
                     return
                 }
 
-                if killServer {
-                    logBinaryDetection("Manual connection requested. Killing ADB server first...")
+                let reconnect = WirelessReconnectPlan(
+                    livePort: connectedWirelessPort(adbPath: adbPath, ip: ip),
+                    reportedPorts: devicePorts, resetServer: killServer
+                )
+                if reconnect.resetServer {
+                    logBinaryDetection("ADB reset policy enabled. Killing ADB server first...")
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: adbPath)
                     process.arguments = ["kill-server"]
@@ -193,7 +197,7 @@ struct ADBConnector {
 
                 // The phone app may cache an old debugging port. Prefer a live,
                 // authorized ADB transport for the exact same host when available.
-                if let port = connectedWirelessPort(adbPath: adbPath, ip: ip) {
+                if let port = reconnect.reusePort {
                     DispatchQueue.main.async {
                         clearConnectionFlag()
                         AppState.shared.adbConnectedIP = ip
@@ -206,6 +210,7 @@ struct ADBConnector {
                     return
                 }
 
+                let devicePorts = reconnect.candidatePorts
                 if devicePorts.isEmpty {
                     if fallbackToMdns {
                         logBinaryDetection("Device reported no ADB ports, attempting mDNS discovery...")
