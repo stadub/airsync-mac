@@ -11,9 +11,12 @@ struct TopSegmentView: View {
     @ObservedObject var appState = AppState.shared
     let toolButtonSize: CGFloat
     let openAndFocusMainWindow: () -> Void
+    var showHeader = true
+    var compactToolbar = false
     
     var body: some View {
         VStack(spacing: 12) {
+            if showHeader {
             HStack {
                 Image(nsImage: NSImage(named: "AppIcon") ?? NSImage())
                     .resizable()
@@ -44,6 +47,12 @@ struct TopSegmentView: View {
                 ) {
                     openAndFocusMainWindow()
                 }
+                GlassButtonView(label: "Close menu", systemImage: "xmark", iconOnly: true, circleSize: toolButtonSize) {
+                    MenuBarManager.shared.hidePopover()
+                }
+                .help("Close menu")
+            }
+
             }
 
             if appState.device != nil {
@@ -166,12 +175,12 @@ struct TopSegmentView: View {
                     }
                 }
                 
-                if appState.adbConnected && !appState.recentApps.isEmpty {
+                if !compactToolbar && appState.adbConnected && !appState.recentApps.isEmpty {
                     RecentAppsGridView()
                 }
             }
         }
-        .padding(12)
+        .padding(compactToolbar ? 0 : 12)
         .segmentStyle()
     }
     

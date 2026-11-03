@@ -186,9 +186,7 @@ class MenuBarManager: NSObject {
             
             panel.setFrameOrigin(NSPoint(x: x, y: y))
             
-            DispatchQueue.main.async {
-                panel.makeKeyAndOrderFront(nil)
-            }
+            panel.makeKeyAndOrderFront(nil)
 
             appState.isMenubarWindowOpen = true
             
@@ -197,31 +195,40 @@ class MenuBarManager: NSObject {
                 if let eventLocation = NSEvent.mouseLocation as NSPoint?,
                    let panelFrame = self?.menubarPanel?.frame,
                    !NSMouseInRect(eventLocation, panelFrame, false) {
-                    if let buttonWindow = button.window,
-                       NSMouseInRect(eventLocation, buttonWindow.frame, false) {
-                        return
-                    }
+                    if self?.statusButtonContains(eventLocation) == true { return }
                     self?.hidePopover()
                 }
             }
-            localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-                if let eventLocation = NSEvent.mouseLocation as NSPoint?,
-                   let panelFrame = self?.menubarPanel?.frame,
-                   !NSMouseInRect(eventLocation, panelFrame, false) {
-                    if let buttonWindow = button.window,
-                       NSMouseInRect(eventLocation, buttonWindow.frame, false) {
-                        return event
+            localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+                guard let self, let panel = self.menubarPanel else { return event }
+                if event.type == .keyDown {
+                    if event.keyCode == 53 {
+                        self.hidePopover()
+                        return nil
                     }
-                   if event.window != nil {
-                        return event
-                    }
-                    self?.hidePopover()
+                    return event
                 }
+                let location = NSEvent.mouseLocation
+                if self.statusButtonContains(location) {
+                    // Consume the closing click so mouseDown cannot reopen the panel.
+                    self.hidePopover()
+                    return nil
+                }
+                if panel.frame.contains(location) { return event }
+                if let window = event.window,
+                   window.parent === panel || window.sheetParent === panel { return event }
+                self.hidePopover()
                 return event
             }
         }
     }
     
+    private func statusButtonContains(_ point: NSPoint) -> Bool {
+        guard let button = statusItem?.button, let window = button.window else { return false }
+        let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
+        return rect.contains(point)
+    }
+
     func hidePopover() {
         menubarPanel?.orderOut(nil)
         appState.isMenubarWindowOpen = false
@@ -251,6 +258,8 @@ class MenuBarStatusButton: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func mouseDown(with event: NSEvent) {
         clickHandler?()
     }
