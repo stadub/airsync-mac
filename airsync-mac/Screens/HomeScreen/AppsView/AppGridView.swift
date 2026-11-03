@@ -28,7 +28,7 @@ struct AppGridView: View {
     var sortedAppsList: [AndroidApp] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
-            return filteredApps.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+            return filteredApps.sorted(by: appNameComesFirst)
         } else {
             let lowerQuery = query.lowercased()
             return filteredApps.sorted { app1, app2 in
@@ -42,17 +42,25 @@ struct AppGridView: View {
                     return starts1
                 }
                 
-                return app1.name.localizedCaseInsensitiveCompare(app2.name) == .orderedAscending
+                return appNameComesFirst(app1, app2)
             }
         }
     }
 
+    private func appNameComesFirst(_ first: AndroidApp, _ second: AndroidApp) -> Bool {
+        let comparison = first.name.localizedStandardCompare(second.name)
+        return comparison == .orderedSame ? first.packageName < second.packageName : comparison == .orderedAscending
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            let spacing: CGFloat = 16
-            let itemWidth: CGFloat = 80
-            let columnsCount = max(1, Int((geometry.size.width + spacing) / (itemWidth + spacing)))
-            let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnsCount)
+            let spacing: CGFloat = 12
+            let horizontalPadding: CGFloat = 12
+            let scrollbarGutter: CGFloat = 12
+            let contentWidth = max(1, geometry.size.width - horizontalPadding * 2 - scrollbarGutter)
+            let minimumItemWidth: CGFloat = 88
+            let columnsCount = max(1, Int((contentWidth + spacing) / (minimumItemWidth + spacing)))
+            let columns = Array(repeating: GridItem(.flexible(minimum: 0), spacing: spacing), count: columnsCount)
 
             ZStack(alignment: .bottom) {
                 ScrollView {
@@ -69,8 +77,11 @@ struct AppGridView: View {
                             )
                         }
                     }
-                    .padding(12)
-                    .padding(.bottom, 60)
+                    .frame(width: contentWidth, alignment: .leading)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.top, 12)
+                    .padding(.bottom, 80)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .whatsNewPopover(item: .appsGrid, arrowEdge: .top)
 
@@ -117,7 +128,7 @@ struct AppGridView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .frame(width: 260)
+                    .frame(width: min(260, max(1, geometry.size.width - 32)))
                     .glassBoxIfAvailable(radius: 20)
                     .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 5)
                 }
@@ -188,6 +199,7 @@ private struct AppGridItemView: View {
             ZStack {
                 AppIconButtonView(app: app)
                     .padding(8)
+                    .frame(maxWidth: .infinity, minHeight: 104, maxHeight: 104)
                     .glassBoxIfAvailable(radius: 15)
                     .overlay(
                         RoundedRectangle(cornerRadius: 15)
@@ -272,8 +284,10 @@ private struct AppIconButtonView: View {
             Text(app.name)
                 .font(.caption)
                 .multilineTextAlignment(.center)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .frame(height: 28, alignment: .top)
         }
     }
 }
