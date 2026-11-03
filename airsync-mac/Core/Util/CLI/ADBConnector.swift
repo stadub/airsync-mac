@@ -16,108 +16,39 @@ struct WiredADBDevice: Hashable, Identifiable {
 
 struct ADBConnector {
 
-    private struct MirrorWindow {
-        let process: Process
-        let executable: String
-        let arguments: [String]
-        let environment: [String: String]?
-        let serial: String
-        let followKeyboard: Bool
-    }
-    private static let mirrorLock = NSLock()
-    private static var mirrorWindows: [Int32: MirrorWindow] = [:]
-    private static var restartingWindows: Set<Int32> = []
-
-    private static func isScreenMirror(_ window: MirrorWindow) -> Bool {
-        !window.arguments.contains(where: { $0.hasPrefix("--new-display") || $0.hasPrefix("--start-app=") })
-    }
-
-    static func closeScreenMirrorWindows(completion: @escaping () -> Void = {}) {
-        mirrorLock.lock()
-        let windows = mirrorWindows.values.filter { $0.process.isRunning && isScreenMirror($0) }
-        for window in windows { restartingWindows.insert(window.process.processIdentifier) }
-        mirrorLock.unlock()
-        DispatchQueue.global(qos: .userInitiated).async {
-            for window in windows {
-                if window.process.isRunning { window.process.terminate() }
-                window.process.waitUntilExit()
-            }
-            DispatchQueue.main.async { completion() }
-        }
-    }
-
-    /// Relaunch only windows owned by AirSync, preserving their launch options.
-    static func restartMirrorWindowsForAudio(completion: @escaping (String?) -> Void) {
-        let noAudio = UserDefaults.standard.noAudio
-        let duplicate = UserDefaults.standard.object(forKey: "keepPhoneAudio") as? Bool ?? true
-        let buffer = Int(min(500, max(60, UserDefaults.standard.object(forKey: "phoneAudioBufferMS") as? Double ?? 200)))
-        mirrorLock.lock()
-        let windows = mirrorWindows.values.filter { $0.process.isRunning }
-        for window in windows { restartingWindows.insert(window.process.processIdentifier) }
-        mirrorLock.unlock()
-        DispatchQueue.global(qos: .userInitiated).async {
-            var errors: [String] = []
-            for window in windows {
-                if window.process.isRunning { window.process.terminate() }
-                window.process.waitUntilExit()
-                var args = window.arguments.filter {
-                    $0 != "--no-audio" && $0 != "--audio-dup" && !$0.hasPrefix("--audio-source=") && !$0.hasPrefix("--audio-buffer=")
-                }
-                if noAudio { args.append("--no-audio") }
-                else {
-                    args += ["--audio-source=playback", "--audio-buffer=\(buffer)"]
-                    if duplicate { args.append("--audio-dup") }
-                }
-                do {
-                    try launchMirrorWindow(executable: window.executable, arguments: args,
-                                           environment: window.environment, serial: window.serial,
-                                           followKeyboard: window.followKeyboard)
-                } catch { errors.append(error.localizedDescription) }
-            }
-            DispatchQueue.main.async { completion(errors.isEmpty ? nil : errors.joined(separator: "\n")) }
-        }
-    }
-
-    private static func launchMirrorWindow(executable: String, arguments: [String], environment: [String: String]?, serial: String, followKeyboard: Bool) throws {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: executable)
-        task.arguments = arguments
-        task.environment = environment
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.terminationHandler = { process in
-            mirrorLock.lock()
-            mirrorWindows.removeValue(forKey: process.processIdentifier)
-            let intentional = restartingWindows.remove(process.processIdentifier) != nil
-            mirrorLock.unlock()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
+    private static let mirrorRegistry = ExternalMirrorRegistry(
+        onStarted: { configuration, managed in
+            guard let process = managed.foundationProcess else { return }
             DispatchQueue.main.async {
-                KeyboardLayoutSync.shared.remove(processID: process.processIdentifier)
+                guard process.isRunning else { return }
+                if configuration.followKeyboard, let adb = configuration.environment?["ADB"] {
+                    KeyboardLayoutSync.shared.register(process: process, adbPath: adb, serial: configuration.serial)
+                }
+            }
+        },
+        onExited: { pid, status, output, intentional in
+            DispatchQueue.main.async {
+                KeyboardLayoutSync.shared.remove(processID: pid)
                 guard !intentional else { return }
                 AppState.shared.adbConnectionResult = "scrcpy exited:\n" + output
-                if process.terminationStatus != 0 {
-                    let lower = output.lowercased()
-                    if lower.contains("unauthorized") || lower.contains("auth") || lower.contains("pair") {
-                        presentScrcpyPairingAlert(title: "Device Not Paired", informative: "Please pair or authorize your Android device with this Mac.")
-                    } else {
-                        presentScrcpyAlert(title: "Mirroring Ended With Errors", informative: "See ADB Console for details.")
-                    }
+                guard status != 0 else { return }
+                let lower = output.lowercased()
+                if lower.contains("unauthorized") || lower.contains("auth") || lower.contains("pair") {
+                    presentScrcpyPairingAlert(title: "Device Not Paired", informative: "Please pair or authorize your Android device with this Mac.")
+                } else {
+                    presentScrcpyAlert(title: "Mirroring Ended With Errors", informative: "See ADB Console for details.")
                 }
             }
         }
-        // Hold the lock until registration so an immediately exiting child cannot leave a stale entry.
-        mirrorLock.lock()
-        do { try task.run() }
-        catch { mirrorLock.unlock(); throw error }
-        mirrorWindows[task.processIdentifier] = MirrorWindow(process: task, executable: executable, arguments: arguments, environment: environment, serial: serial, followKeyboard: followKeyboard)
-        mirrorLock.unlock()
-        if followKeyboard, let adbPath = environment?["ADB"] {
-            DispatchQueue.main.async {
-                guard task.isRunning else { return }
-                KeyboardLayoutSync.shared.register(process: task, adbPath: adbPath, serial: serial)
-            }
+    )
+
+    static func closeScreenMirrorWindows(completion: @escaping () -> Void = {}) {
+        mirrorRegistry.closeScreenMirrors { DispatchQueue.main.async(execute: completion) }
+    }
+
+    static func restartMirrorWindowsForAudio(completion: @escaping (String?) -> Void) {
+        mirrorRegistry.restartAudio(MirrorPreferences().audioOptions) { error in
+            DispatchQueue.main.async { completion(error) }
         }
     }
 
@@ -286,8 +217,12 @@ struct ADBConnector {
                     return
                 }
 
-                if killServer {
-                    logBinaryDetection("Manual connection requested. Killing ADB server first...")
+                let reconnect = WirelessReconnectPlan(
+                    livePort: connectedWirelessPort(adbPath: adbPath, ip: ip),
+                    reportedPorts: devicePorts, resetServer: killServer
+                )
+                if reconnect.resetServer {
+                    logBinaryDetection("ADB reset policy enabled. Killing ADB server first...")
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: adbPath)
                     process.arguments = ["kill-server"]
@@ -298,7 +233,7 @@ struct ADBConnector {
 
                 // The phone app may cache an old debugging port. Prefer a live,
                 // authorized ADB transport for the exact same host when available.
-                if let port = connectedWirelessPort(adbPath: adbPath, ip: ip) {
+                if let port = reconnect.reusePort {
                     DispatchQueue.main.async {
                         clearConnectionFlag()
                         AppState.shared.adbConnectedIP = ip
@@ -311,6 +246,7 @@ struct ADBConnector {
                     return
                 }
 
+                let devicePorts = reconnect.candidatePorts
                 if devicePorts.isEmpty {
                     if fallbackToMdns {
                         logBinaryDetection("Device reported no ADB ports, attempting mDNS discovery...")
@@ -598,9 +534,7 @@ struct ADBConnector {
         let alwaysOnTop = UserDefaults.standard.scrcpyOnTop
         let stayAwake = UserDefaults.standard.stayAwake
         let turnScreenOff = UserDefaults.standard.turnScreenOff
-        let noAudio = UserDefaults.standard.noAudio
-        let keepPhoneAudio = UserDefaults.standard.object(forKey: "keepPhoneAudio") as? Bool ?? true
-        let audioBufferMS = Int(min(500, max(60, UserDefaults.standard.object(forKey: "phoneAudioBufferMS") as? Double ?? 200)))
+        let audioOptions = MirrorPreferences().audioOptions
         let manualPosition = UserDefaults.standard.manualPosition
         let manualPositionCoords = UserDefaults.standard.manualPositionCoords
         let continueApp = UserDefaults.standard.continueApp
@@ -654,12 +588,7 @@ struct ADBConnector {
                     if alwaysOnTop { args.append("--always-on-top") }
                     if stayAwake { args.append(contentsOf: ["--stay-awake", "--keep-active"]) }
                     if turnScreenOff { args.append("--turn-screen-off") }
-                    if noAudio { args.append("--no-audio") }
-                    else {
-                        args.append("--audio-source=playback")
-                        args.append("--audio-buffer=\(audioBufferMS)")
-                        if keepPhoneAudio { args.append("--audio-dup") }
-                    }
+                    args = audioOptions.applying(to: args)
                     if followMacKeyboard || directKeyInput { args.append("--keyboard=uhid") }
 
                     let displayArg = "/\(dpi)"
@@ -684,13 +613,16 @@ struct ADBConnector {
                         environment["PATH"] = "\(adbDir):" + (environment["PATH"] ?? "")
                         environment["ADB"] = adbPath
                     }
-                    do {
-                        let serial = wiredAdbEnabled ? (serialToUse ?? fullAddress) : fullAddress
-                        try launchMirrorWindow(executable: scrcpyPath, arguments: args, environment: environment,
-                                               serial: serial, followKeyboard: followMacKeyboard)
-                    } catch {
+                    let serial = wiredAdbEnabled ? (serialToUse ?? fullAddress) : fullAddress
+                    let configuration = MirrorLaunchConfiguration(
+                        executable: scrcpyPath, arguments: args, environment: environment,
+                        serial: serial, followKeyboard: followMacKeyboard
+                    )
+                    mirrorRegistry.launch(configuration) { error in
                         DispatchQueue.main.async {
-                            AppState.shared.adbConnectionResult = "Failed to start scrcpy: \(error.localizedDescription)"
+                            if let error {
+                                AppState.shared.adbConnectionResult = "Failed to start scrcpy: \(error)"
+                            }
                         }
                     }
                 }

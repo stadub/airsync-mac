@@ -1,0 +1,1 @@
+With Swift 6.2 or newer, run `swift test` from the repository root on macOS. Seven tests compile the production lifecycle, audio routing, preferences, reconnect policy, and bounded subprocess logging types. Process creation and session restarts are injected; no Android device is required. Full Xcode builds and live playback checks remain separate.
