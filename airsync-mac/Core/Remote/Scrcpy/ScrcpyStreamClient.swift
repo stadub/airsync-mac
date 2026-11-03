@@ -23,9 +23,12 @@ class ScrcpyStreamClient: ObservableObject {
     private var retryCount = 0
     private let maxRetries = 5
     
+    private var onTransportReady: (() -> Void)?
+
     var onPacketReceived: ((Data, Bool, Bool, UInt64) -> Void)?
     
-    func connect(host: String = "127.0.0.1", port: UInt16 = 1234) {
+    func connect(host: String = "127.0.0.1", port: UInt16 = 1234, onTransportReady: (() -> Void)? = nil) {
+        if let onTransportReady { self.onTransportReady = onTransportReady }
         // Reset retry count if it's a fresh manual connection
         if retryCount == 0 {
             print("[ScrcpyStreamClient] Connecting to \(host):\(port)...")
@@ -81,6 +84,7 @@ class ScrcpyStreamClient: ObservableObject {
     
     func disconnect() {
         retryCount = 0
+        onTransportReady = nil
         connection?.cancel()
         connection = nil
         DispatchQueue.main.async {
@@ -97,6 +101,9 @@ class ScrcpyStreamClient: ObservableObject {
                 return
             }
             
+            guard data?.count == 1 else { self?.handleConnectionFailure(); return }
+            if let callback = self?.onTransportReady { DispatchQueue.main.async(execute: callback) }
+
             // Read 64-byte device name header
             self?.connection?.receive(minimumIncompleteLength: 64, maximumLength: 64) { [weak self] data, context, isComplete, error in
                 guard let data = data, data.count == 64, error == nil else {

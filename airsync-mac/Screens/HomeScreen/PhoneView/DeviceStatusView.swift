@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import Combine
 
 struct DeviceStatusView: View {
     @ObservedObject var appState = AppState.shared
@@ -16,13 +17,17 @@ struct DeviceStatusView: View {
     @State private var showingPlusPopover = false
     var showMediaToggle: Bool = true
     var useGlass: Bool = true
+    var compact: Bool = false
+    var showMediaCard: Bool = true
+    var showBattery: Bool = true
+    var showSound: Bool = true
 
     var body: some View {
 
         VStack {
             if let music = appState.status?.music {
                 let title = music.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty && !appState.isMusicCardHidden && showMediaToggle {
+                if !title.isEmpty && !appState.isMusicCardHidden && showMediaToggle && showMediaCard {
                     MediaPlayerView(music: music)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
@@ -33,6 +38,22 @@ struct DeviceStatusView: View {
                 let batteryIsCharging = appState.status?.battery.isCharging ?? false
 
 
+                if showBattery {
+                if compact {
+                    VStack(spacing: 0) {
+                        Image(systemName: batteryIcon(for: batteryLevel, isCharging: batteryIsCharging))
+                            .font(.system(size: 11))
+                            .contentTransition(.symbolEffect)
+                        Text("\(batteryLevel)%")
+                            .font(.system(size: 8))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.leading, 4)
+                    .help("Battery: \(batteryLevel)%")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Battery: \(batteryLevel)%")
+                } else {
                 HStack{
                     Image(systemName: batteryIcon(for: batteryLevel, isCharging: batteryIsCharging))
                         .help("\(batteryLevel)%")
@@ -42,9 +63,14 @@ struct DeviceStatusView: View {
                 }
                 .padding(.leading, 4)
 
+                }
+
+                }
+
                 let volume = appState.status?.music?.volume ?? 100
                 let isMuted = appState.status?.music?.isMuted ?? false
 
+                if showSound {
                 GlassButtonView(
                     label: "Music Player",
                     systemImage: volumeIcon(for: volume, isMuted: isMuted),
@@ -64,7 +90,9 @@ struct DeviceStatusView: View {
                 .help(isMuted ? "Muted" : "\(volume)%")
                 .contentTransition(.symbolEffect)
                     .popover(isPresented: $showingVolumePopover, arrowEdge: .bottom) {
-                        VStack {
+                        VStack(alignment: .leading, spacing: 12) {
+                            MirrorAudioRoutePicker()
+                            Divider()
                             HStack {
                                 Image(systemName: "speaker.fill")
 
@@ -97,12 +125,13 @@ struct DeviceStatusView: View {
                             }
                         }
                         .padding()
-                        .frame(width: 200)
+                        .frame(width: 260)
                     }
                     .popover(isPresented: $showingPlusPopover, arrowEdge: .bottom) {
                         PlusFeaturePopover(message: "Control volume with AirSync+")
                     }
  
+                }
                 if let music = appState.status?.music {
                     let title = music.title.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !title.isEmpty && showMediaToggle {
@@ -122,11 +151,11 @@ struct DeviceStatusView: View {
                     }
                 }
             }
-            .padding(.bottom, appState.isMusicCardHidden ? 0 : 8)
+            .padding(.bottom, compact || appState.isMusicCardHidden ? 0 : 8)
 
         }
-        .padding(4)
-        .applyGlassViewIfAvailable()
+        .padding(compact ? 0 : 4)
+        .applyGlassViewIfAvailable(enabled: useGlass)
         .animation(
             .easeInOut(duration: 0.25),
             value: "\(appState.status?.battery.level ?? 0)-\(appState.status?.music?.volume ?? 0)"
@@ -198,4 +227,54 @@ struct DeviceStatusView: View {
 
 #Preview {
     DeviceStatusView()
+}
+
+struct MirrorAudioRoutePicker: View {
+    @AppStorage("noAudio") private var noAudio = false
+    @AppStorage("keepPhoneAudio") private var keepPhoneAudio = true
+    @ObservedObject private var routing = MirrorAudioRouting.shared
+    var compact = false
+
+    private var route: AudioRoute { noAudio ? .phone : (keepPhoneAudio ? .both : .mac) }
+    private var title: String { noAudio ? "Phone" : (keepPhoneAudio ? "Both" : "Mac") }
+    private var selection: Binding<AudioRoute> {
+        Binding(get: { route }, set: { if $0 != route { routing.select($0) } })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if compact {
+                Menu {
+                    Picker("Play sound on", selection: selection) {
+                        Text("Phone").tag(AudioRoute.phone)
+                        Text("Mac").tag(AudioRoute.mac)
+                        Text("Both").tag(AudioRoute.both)
+                    }
+                } label: {
+                    Label(routing.isChanging ? "Switching…" : title, systemImage: "speaker.wave.2")
+                        .font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Play phone sound on Phone, Mac, or Both")
+            } else {
+                Text("Play sound on").font(.caption).foregroundStyle(.secondary)
+                Picker("Play sound on", selection: selection) {
+                    Text("Phone").tag(AudioRoute.phone)
+                    Text("Mac").tag(AudioRoute.mac)
+                    Text("Both").tag(AudioRoute.both)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Text(routing.isChanging ? "Reconnecting mirror…" : "Applies while mirroring. Mirror windows reopen automatically when changed.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = routing.error {
+                Text(error).font(.caption2).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .disabled(routing.isChanging)
+    }
 }

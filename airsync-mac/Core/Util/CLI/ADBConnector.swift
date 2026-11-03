@@ -16,6 +16,42 @@ struct WiredADBDevice: Hashable, Identifiable {
 
 struct ADBConnector {
 
+    private static let mirrorRegistry = ExternalMirrorRegistry(
+        onStarted: { configuration, managed in
+            guard let process = managed.foundationProcess else { return }
+            DispatchQueue.main.async {
+                guard process.isRunning else { return }
+                if configuration.followKeyboard, let adb = configuration.environment?["ADB"] {
+                    KeyboardLayoutSync.shared.register(process: process, adbPath: adb, serial: configuration.serial)
+                }
+            }
+        },
+        onExited: { pid, status, output, intentional in
+            DispatchQueue.main.async {
+                KeyboardLayoutSync.shared.remove(processID: pid)
+                guard !intentional else { return }
+                AppState.shared.adbConnectionResult = "scrcpy exited:\n" + output
+                guard status != 0 else { return }
+                let lower = output.lowercased()
+                if lower.contains("unauthorized") || lower.contains("auth") || lower.contains("pair") {
+                    presentScrcpyPairingAlert(title: "Device Not Paired", informative: "Please pair or authorize your Android device with this Mac.")
+                } else {
+                    presentScrcpyAlert(title: "Mirroring Ended With Errors", informative: "See ADB Console for details.")
+                }
+            }
+        }
+    )
+
+    static func closeScreenMirrorWindows(completion: @escaping () -> Void = {}) {
+        mirrorRegistry.closeScreenMirrors { DispatchQueue.main.async(execute: completion) }
+    }
+
+    static func restartMirrorWindowsForAudio(completion: @escaping (String?) -> Void) {
+        mirrorRegistry.restartAudio(MirrorPreferences().audioOptions) { error in
+            DispatchQueue.main.async { completion(error) }
+        }
+    }
+
     // Potential fallback paths
     static let possibleADBPaths: [String] = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -498,7 +534,7 @@ struct ADBConnector {
         let alwaysOnTop = UserDefaults.standard.scrcpyOnTop
         let stayAwake = UserDefaults.standard.stayAwake
         let turnScreenOff = UserDefaults.standard.turnScreenOff
-        let noAudio = UserDefaults.standard.noAudio
+        let audioOptions = MirrorPreferences().audioOptions
         let manualPosition = UserDefaults.standard.manualPosition
         let manualPositionCoords = UserDefaults.standard.manualPositionCoords
         let continueApp = UserDefaults.standard.continueApp
@@ -550,9 +586,9 @@ struct ADBConnector {
                         args.append("--window-y=\(manualPositionCoords[1])")
                     }
                     if alwaysOnTop { args.append("--always-on-top") }
-                    if stayAwake { args.append("--stay-awake") }
+                    if stayAwake { args.append(contentsOf: ["--stay-awake", "--keep-active"]) }
                     if turnScreenOff { args.append("--turn-screen-off") }
-                    if noAudio { args.append("--no-audio") }
+                    args = audioOptions.applying(to: args)
                     if followMacKeyboard || directKeyInput { args.append("--keyboard=uhid") }
 
                     let displayArg = "/\(dpi)"
@@ -571,51 +607,22 @@ struct ADBConnector {
                     }
 
                     logBinaryDetection("Launching scrcpy: \(scrcpyPath) \(args.joined(separator: " "))")
-                    let task = Process()
-                    task.executableURL = URL(fileURLWithPath: scrcpyPath)
-                    task.arguments = args
-
+                    var environment = ProcessInfo.processInfo.environment
                     if let adbPath = findExecutable(named: "adb", fallbackPaths: possibleADBPaths) {
-                        var env = ProcessInfo.processInfo.environment
                         let adbDir = URL(fileURLWithPath: adbPath).deletingLastPathComponent().path
-                        env["PATH"] = "\(adbDir):" + (env["PATH"] ?? "")
-                        env["ADB"] = adbPath
-                        task.environment = env
+                        environment["PATH"] = "\(adbDir):" + (environment["PATH"] ?? "")
+                        environment["ADB"] = adbPath
                     }
-
-                    let pipe = Pipe()
-                    task.standardOutput = pipe
-                    task.standardError = pipe
-
-                    task.terminationHandler = { process in
-                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                        let output = String(data: data, encoding: .utf8) ?? ""
+                    let serial = wiredAdbEnabled ? (serialToUse ?? fullAddress) : fullAddress
+                    let configuration = MirrorLaunchConfiguration(
+                        executable: scrcpyPath, arguments: args, environment: environment,
+                        serial: serial, followKeyboard: followMacKeyboard
+                    )
+                    mirrorRegistry.launch(configuration) { error in
                         DispatchQueue.main.async {
-                            KeyboardLayoutSync.shared.remove(processID: process.processIdentifier)
-                            AppState.shared.adbConnectionResult = "scrcpy exited:\n" + output
-                            if process.terminationStatus != 0 {
-                                let lower = output.lowercased()
-                                if lower.contains("unauthorized") || lower.contains("auth") || lower.contains("pair") {
-                                    presentScrcpyPairingAlert(
-                                        title: "Device Not Paired",
-                                        informative: "Your Android device is not paired or authorized with this Mac. Please pair the device first using either the ADB QR Code or the command line (adb pair)."
-                                    )
-                                } else {
-                                    presentScrcpyAlert(title: "Mirroring Ended With Errors", informative: "See ADB Console for details.")
-                                }
+                            if let error {
+                                AppState.shared.adbConnectionResult = "Failed to start scrcpy: \(error)"
                             }
-                        }
-                    }
-
-                    do {
-                        try task.run()
-                        if followMacKeyboard, let adbPath = task.environment?["ADB"] {
-                            let serial = wiredAdbEnabled ? (serialToUse ?? fullAddress) : fullAddress
-                            DispatchQueue.main.async { KeyboardLayoutSync.shared.register(process: task, adbPath: adbPath, serial: serial) }
-                        }
-                    } catch {
-                        DispatchQueue.main.async {
-                            AppState.shared.adbConnectionResult = "Failed to start scrcpy: \(error.localizedDescription)"
                         }
                     }
                 }
