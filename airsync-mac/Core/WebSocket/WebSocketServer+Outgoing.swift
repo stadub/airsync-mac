@@ -206,10 +206,9 @@ extension WebSocketServer {
     }
 
     private func sendMediaAction(_ action: String) {
+        // sendMessage already falls back to BLE when Wi-Fi is unavailable.
+        // Sending through both transports would execute play/pause twice.
         sendMessage(type: "mediaControl", data: ["action": action])
-        
-        // Also send via BLE
-        BLETransportBridge.shared.sendMediaControl(action)
     }
 
     /// Forward a system media command (from MPRemoteCommandCenter) back to Android.

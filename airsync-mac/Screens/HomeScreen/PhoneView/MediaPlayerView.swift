@@ -70,6 +70,7 @@ private struct MediaSeekbarView: View {
 
 struct MediaPlayerView: View {
     var music: DeviceStatus.Music
+    var showStopControl = false
     @State private var showingPlusPopover = false
 
     private var hasSeekbar: Bool {
@@ -154,6 +155,12 @@ struct MediaPlayerView: View {
                                     action: { WebSocketServer.shared.skipNext() }
                                 )
                                 .keyboardShortcut(.rightArrow, modifiers: .control)
+                                if showStopControl {
+                                    GlassButtonView(label: "Stop", systemImage: "stop.fill", iconOnly: true) {
+                                        WebSocketServer.shared.stopMedia()
+                                    }
+                                    .help("Stop playback")
+                                }
                             }
                         }
                     }

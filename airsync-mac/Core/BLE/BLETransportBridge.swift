@@ -132,19 +132,25 @@ class BLETransportBridge {
         
         // Update AppState.status
         DispatchQueue.main.async {
+            // Wi-Fi carries timing/artwork that the BLE media payload omits.
+            guard AppState.shared.device?.isRegularConnection != true else { return }
+            let previous = AppState.shared.status?.music
+            let sameTrack = previous?.title == title && previous?.artist == artist
             let music = DeviceStatus.Music(
                 isPlaying: isPlaying,
                 title: title,
                 artist: artist,
                 volume: volume,
                 isMuted: isMuted,
-                albumArt: "", // No art over BLE
+                albumArt: sameTrack ? (previous?.albumArt ?? "") : "",
                 likeStatus: likeStatus,
-                duration: -1.0,
-                position: -1.0,
+                duration: sameTrack ? (previous?.duration ?? -1) : -1,
+                position: sameTrack ? (previous?.position ?? -1) : -1,
+                packageName: sameTrack ? previous?.packageName : nil,
                 isBuffering: false
             )
             
+            if !sameTrack { AppState.shared.mediaPosition = 0 }
             if AppState.shared.status == nil {
                 AppState.shared.status = DeviceStatus(battery: DeviceStatus.Battery(level: 0, isCharging: false), isPaired: true, music: music)
             } else {

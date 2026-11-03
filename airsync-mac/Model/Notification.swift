@@ -59,3 +59,24 @@ struct Notification: Codable, Identifiable, Equatable {
         case progress, progressMax, progressIndeterminate, ongoing
     }
 }
+
+
+extension Notification {
+    var hasMediaTransportActions: Bool {
+        let controls = actions.filter { action in
+            guard action.type == .button else { return false }
+            let name = action.name.lowercased()
+            return ["play", "pause", "previous", "next", "stop", "воспроиз", "пауз", "предыдущ", "следующ", "стоп"].contains { name.contains($0) }
+        }
+        return controls.count >= 2
+    }
+
+    func matchesPlayback(_ music: DeviceStatus.Music) -> Bool {
+        guard hasMediaTransportActions else { return false }
+        if let packageName = music.packageName, !packageName.isEmpty {
+            return packageName == package
+        }
+        let track = music.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !track.isEmpty && title.localizedCaseInsensitiveContains(track)
+    }
+}

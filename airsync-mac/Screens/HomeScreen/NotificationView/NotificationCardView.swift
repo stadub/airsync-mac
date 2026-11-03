@@ -13,7 +13,18 @@ struct NotificationCardView: View {
     let deleteNotification: () -> Void
     let hideNotification: () -> Void
 
+    @ObservedObject private var appState = AppState.shared
     @State private var isHovering = false
+
+    private var liveMusic: DeviceStatus.Music? {
+        guard let music = appState.status?.music, notification.hasMediaTransportActions else { return nil }
+        if notification.matchesPlayback(music) { return music }
+        // Older Android companions omit the source package. Only associate an
+        // unmatched media card when there is exactly one candidate.
+        if music.packageName?.isEmpty != false,
+           appState.notifications.filter({ $0.hasMediaTransportActions }).count == 1 { return music }
+        return nil
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -24,9 +35,12 @@ struct NotificationCardView: View {
                     .padding(2)
 
                 VStack(alignment: .leading) {
-                    Text(notification.app + " - " + notification.title)
+                    Text(liveMusic == nil ? notification.app + " - " + notification.title : notification.app)
                         .font(.headline)
 
+                    if let music = liveMusic {
+                        MediaPlayerView(music: music, showStopControl: true)
+                    } else {
                     Text(notification.body)
                         .font(.body)
 
@@ -78,6 +92,7 @@ struct NotificationCardView: View {
                             }
                         }
                         .padding(.top, 4)
+                    }
                     }
                 }
 
