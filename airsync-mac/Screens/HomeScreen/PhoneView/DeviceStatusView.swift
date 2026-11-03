@@ -229,48 +229,15 @@ struct DeviceStatusView: View {
     DeviceStatusView()
 }
 
-/// Shared by the menu bar and the embedded mirror header.
-final class MirrorAudioRouting: ObservableObject {
-    static let shared = MirrorAudioRouting()
-    @Published private(set) var isChanging = false
-    @Published private(set) var error: String?
-
-    func select(_ route: String) {
-        guard !isChanging else { return }
-        UserDefaults.standard.set(route == "phone", forKey: "noAudio")
-        UserDefaults.standard.set(route != "mac", forKey: "keepPhoneAudio")
-        error = nil
-        isChanging = true
-        let restarts = DispatchGroup()
-        restarts.enter()
-        ADBConnector.restartMirrorWindowsForAudio { [self] failure in
-            if let failure { error = failure }
-            restarts.leave()
-        }
-        let appState = AppState.shared
-        if appState.isSidebarMirroring || appState.isNativeMirroring || appState.isNativeDesktopMirroring {
-            restarts.enter()
-            ScrcpyServerManager.shared.startMirroringSession(
-                appState: appState, streamClient: ScrcpyStreamClient.shared,
-                desktopMode: appState.isNativeDesktopMirroring
-            ) { [self] success, failure in
-                if !success { error = failure ?? "Could not reconnect the mirror." }
-                restarts.leave()
-            }
-        }
-        restarts.notify(queue: .main) { [self] in isChanging = false }
-    }
-}
-
 struct MirrorAudioRoutePicker: View {
     @AppStorage("noAudio") private var noAudio = false
     @AppStorage("keepPhoneAudio") private var keepPhoneAudio = true
     @ObservedObject private var routing = MirrorAudioRouting.shared
     var compact = false
 
-    private var route: String { noAudio ? "phone" : (keepPhoneAudio ? "both" : "mac") }
+    private var route: AudioRoute { noAudio ? .phone : (keepPhoneAudio ? .both : .mac) }
     private var title: String { noAudio ? "Phone" : (keepPhoneAudio ? "Both" : "Mac") }
-    private var selection: Binding<String> {
+    private var selection: Binding<AudioRoute> {
         Binding(get: { route }, set: { if $0 != route { routing.select($0) } })
     }
 
@@ -279,9 +246,9 @@ struct MirrorAudioRoutePicker: View {
             if compact {
                 Menu {
                     Picker("Play sound on", selection: selection) {
-                        Text("Phone").tag("phone")
-                        Text("Mac").tag("mac")
-                        Text("Both").tag("both")
+                        Text("Phone").tag(AudioRoute.phone)
+                        Text("Mac").tag(AudioRoute.mac)
+                        Text("Both").tag(AudioRoute.both)
                     }
                 } label: {
                     Label(routing.isChanging ? "Switching…" : title, systemImage: "speaker.wave.2")
@@ -293,9 +260,9 @@ struct MirrorAudioRoutePicker: View {
             } else {
                 Text("Play sound on").font(.caption).foregroundStyle(.secondary)
                 Picker("Play sound on", selection: selection) {
-                    Text("Phone").tag("phone")
-                    Text("Mac").tag("mac")
-                    Text("Both").tag("both")
+                    Text("Phone").tag(AudioRoute.phone)
+                    Text("Mac").tag(AudioRoute.mac)
+                    Text("Both").tag(AudioRoute.both)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
