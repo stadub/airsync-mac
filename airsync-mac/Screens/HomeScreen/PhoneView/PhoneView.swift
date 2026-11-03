@@ -72,7 +72,7 @@ struct PhoneView: View {
                 .onChange(of: appState.isSidebarMirroring) { _, _ in updateImage() }
 
                 if appState.isSidebarMirroring && showEmbeddedMirrorNavigation {
-                    EmbeddedMirrorNavigationBar()
+                    MirrorNavigationBar()
                         .frame(width: cardWidth)
                 }
             }

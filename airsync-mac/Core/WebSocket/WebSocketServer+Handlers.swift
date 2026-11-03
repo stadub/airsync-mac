@@ -151,7 +151,7 @@ extension WebSocketServer {
             }
 
             if (!AppState.shared.adbConnected && (AppState.shared.adbEnabled || AppState.shared.manualAdbConnectionPending || AppState.shared.wiredAdbEnabled) && AppState.shared.isPlus) {
-                let killServer = AppState.shared.userInitiatedAdbConnect || AppState.shared.alwaysKillAdbBeforeConnect
+                let killServer = AppState.shared.alwaysKillAdbBeforeConnect
                 
                 if AppState.shared.wiredAdbEnabled {
                     ADBConnector.getWiredDevices { wiredDevices in

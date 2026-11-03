@@ -55,10 +55,10 @@ struct MirroringSettingsView: View {
             }
             .padding()
         }
-        .sheet(isPresented: $showNavigationEditor) { EmbeddedNavigationEditor() }
-        .sheet(isPresented: $showHeaderEditor) { EmbeddedHeaderEditor() }
-        .sheet(isPresented: $showDesktopHeaderEditor) { EmbeddedHeaderEditor(desktopMode: true) }
-        .sheet(isPresented: $showDesktopNavigationEditor) { EmbeddedNavigationEditor(desktopMode: true) }
+        .sheet(isPresented: $showNavigationEditor) { MirrorNavigationEditor() }
+        .sheet(isPresented: $showHeaderEditor) { MirrorHeaderEditor() }
+        .sheet(isPresented: $showDesktopHeaderEditor) { MirrorHeaderEditor(desktopMode: true) }
+        .sheet(isPresented: $showDesktopNavigationEditor) { MirrorNavigationEditor(desktopMode: true) }
         .onAppear {
             tempBitrate = Double(AppState.shared.scrcpyBitrate)
             tempResolution = Double(AppState.shared.scrcpyResolution)

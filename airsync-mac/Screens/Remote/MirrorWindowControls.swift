@@ -31,15 +31,15 @@ final class MirrorWindowControls {
                             Image(systemName: "xmark.circle.fill")
                         }.buttonStyle(.plain).help("Close mirror").accessibilityLabel("Close mirror")
                     }
-                }.padding(6).frame(width: width).fixedSize(horizontal: false, vertical: true), height: 48, width: width, mirror: parent, header: true)
+                }.padding(6).frame(width: width).fixedSize(horizontal: false, vertical: true), height: 48, width: width)
             header.title = "Mirror header controls"
-            let handler: ((EmbeddedNavigationAction) -> Void)? = serial.map { target in
+            let handler: ((MirrorNavigationAction) -> Void)? = serial.map { target in
                 { ADBConnector.performMirrorControl($0, serial: target) }
             }
             navigation = MirrorWindowControls.panel(
-                EmbeddedMirrorNavigationBar(desktopMode: desktopMode, commandHandler: handler)
+                MirrorNavigationBar(desktopMode: desktopMode, commandHandler: handler)
                     .frame(width: width),
-                height: 44, width: width, mirror: parent, header: false)
+                height: 44, width: width)
             if let parent {
                 parent.addChildWindow(header, ordered: .above)
                 parent.addChildWindow(navigation, ordered: .above)
@@ -58,7 +58,7 @@ final class MirrorWindowControls {
     private var timer: Timer?
     private var positioning = false
 
-    private static func panel(_ view: some View, height: CGFloat, width: CGFloat = 320, mirror: NSWindow? = nil, header: Bool = false) -> NSPanel {
+    private static func panel(_ view: some View, height: CGFloat, width: CGFloat = 320) -> NSPanel {
         let panel = MirrorControlsPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
@@ -136,8 +136,8 @@ final class MirrorWindowControls {
                 (frontPID == ourPID && (parent.isMainWindow || parent.isKeyWindow || ownsKeyWindow(session))))
             session.header.level = NSWindow.Level(rawValue: parent.level.rawValue + 1)
             session.navigation.level = session.header.level
-            position(session, frame: parent.frame, visible: (UserDefaults.standard.object(forKey: session.desktopMode ? "showDesktopMirrorControls" : "showMirrorControls") as? Bool ?? true) && session.enabled && parent.isVisible && !parent.isMiniaturized && active,
-                     navigationEnabled: UserDefaults.standard.object(forKey: session.desktopMode ? "showDesktopMirrorNavigation" : "showEmbeddedMirrorNavigation") as? Bool ?? true)
+            position(session, frame: parent.frame, visible: (UserDefaults.standard.object(forKey: (session.desktopMode ? MirrorProfile.desktop : .phone).controlsKey) as? Bool ?? true) && session.enabled && parent.isVisible && !parent.isMiniaturized && active,
+                     navigationEnabled: UserDefaults.standard.object(forKey: (session.desktopMode ? MirrorProfile.desktop : .phone).navigationEnabledKey) as? Bool ?? true)
         }
         let windows = external.isEmpty ? [] : (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? [])
         for (pid, session) in Array(external) {
@@ -207,97 +207,4 @@ final class MirrorWindowControls {
 private final class MirrorControlsPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-}
-
-/// The phone-name view is the only draggable part of the controls.
-struct MirrorNameDragLabel: NSViewRepresentable {
-    let name: String
-    let mirror: NSWindow
-    func makeNSView(context: Context) -> MirrorDragView {
-        let view = MirrorDragView()
-        view.mirror = mirror
-        view.name = name
-        view.toolTip = "Drag the phone name to move the mirror"
-        return view
-    }
-    func updateNSView(_ view: MirrorDragView, context: Context) {
-        view.mirror = mirror
-        view.name = name
-        view.needsDisplay = true
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: MirrorDragView, context: Context) -> CGSize? {
-        CGSize(width: 140, height: 28)
-    }
-}
-
-final class MirrorDragView: NSView {
-        weak var mirror: NSWindow?
-        var name = ""
-        override var needsPanelToBecomeKey: Bool { true }
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            let local = convert(point, from: superview)
-            let target = NSRect(x: bounds.minX, y: bounds.minY, width: min(140, bounds.width), height: bounds.height)
-            return !isHiddenOrHasHiddenAncestor && target.contains(local) ? self : nil
-        }
-        override var mouseDownCanMoveWindow: Bool { false }
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
-        override func draw(_ dirtyRect: NSRect) {
-            NSColor.windowBackgroundColor.withAlphaComponent(0.15).setFill()
-            bounds.fill()
-            let text = NSAttributedString(string: name, attributes: [
-                .font: NSFont.systemFont(ofSize: 14, weight: .medium),
-                .foregroundColor: NSColor.labelColor
-            ])
-            text.draw(at: NSPoint(x: 4, y: max(0, (bounds.height - text.size().height) / 2)))
-        }
-        override func mouseDown(with event: NSEvent) {
-            guard let mirror else { return }
-            // Track only this dedicated drag surface. The original event belongs
-            // to the floating panel, so handing it to another window's native
-            // drag API can fail. Move the mirror explicitly in screen coordinates.
-            let start = NSEvent.mouseLocation
-            let origin = mirror.frame.origin
-            NSCursor.closedHand.push()
-            defer { NSCursor.pop() }
-            while true {
-                guard let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp],
-                                                until: Date(timeIntervalSinceNow: 0.1),
-                                                inMode: .eventTracking, dequeue: true) else {
-                    if NSEvent.pressedMouseButtons & 1 == 0 { break }
-                    continue
-                }
-                let point = NSEvent.mouseLocation
-                mirror.setFrameOrigin(NSPoint(x: origin.x + point.x - start.x, y: origin.y + point.y - start.y))
-                MirrorWindowControls.shared.refresh()
-                if next.type == .leftMouseUp { break }
-            }
-        }
-}
-
-/// Editors use a normal window, rather than a sheet attached to a 44-point panel.
-final class MirrorLayoutEditorWindow {
-    static let shared = MirrorLayoutEditorWindow()
-    private var windows: [String: NSWindow] = [:]
-    func showNavigation(desktopMode: Bool) { show(desktopMode: desktopMode, navigation: true) }
-    func showHeader(desktopMode: Bool) { show(desktopMode: desktopMode, navigation: false) }
-    private func show(desktopMode: Bool, navigation: Bool) {
-        let key = "\(desktopMode)-\(navigation)"
-        if let existing = windows[key] { existing.makeKeyAndOrderFront(nil); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 410, height: navigation ? 520 : 490),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.title = navigation ? "Navigation buttons" : "Header buttons"
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 3)
-        let done = { [weak self, weak window] in window?.close(); self?.windows.removeValue(forKey: key) }
-        if navigation {
-            window.contentView = NSHostingView(rootView: EmbeddedNavigationEditor(desktopMode: desktopMode, onDone: done))
-        } else {
-            window.contentView = NSHostingView(rootView: EmbeddedHeaderEditor(desktopMode: desktopMode, onDone: done))
-        }
-        windows[key] = window
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
 }
