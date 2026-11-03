@@ -1,0 +1,1 @@
+With Swift 6.2 or newer, run `swift test` from the repository root on macOS. Tests compile production types. This branch tests adoption of live wireless transports and preservation of the known endpoint during explicit resets. No phone is required. Full Xcode and live device checks remain separate.

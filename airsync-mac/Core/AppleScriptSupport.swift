@@ -554,35 +554,8 @@ class AirSyncConnectADBCommand: NSScriptCommand {
             ADBConnector.connectToADB(ip: device.ipAddress)
         }
 
-        // Wait a moment for the connection attempt to complete
-        let semaphore = DispatchSemaphore(value: 0)
-        var result = "Connecting..."
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            if AppState.shared.adbConnected {
-                result = "Connected"
-            } else if let errorResult = AppState.shared.adbConnectionResult {
-                // Parse common error messages
-                let lowercased = errorResult.lowercased()
-                if lowercased.contains("not found") {
-                    result = "ADB not found. Please install via Homebrew: brew install android-platform-tools"
-                } else if lowercased.contains("no results") || lowercased.contains("mdns") {
-                    result = "Device not found. Make sure wireless debugging is enabled and device is on same network"
-                } else if lowercased.contains("protocol fault") || lowercased.contains("connection reset") {
-                    result = "ADB connection failed. Another ADB instance may be using the device"
-                } else if lowercased.contains("refused") {
-                    result = "Connection refused. Check if wireless debugging is enabled"
-                } else {
-                    result = "Connection failed. Check ADB console in settings for details"
-                }
-            } else {
-                result = "Connection failed"
-            }
-            semaphore.signal()
-        }
-
-        semaphore.wait()
-        return result
+        // Do not block the main queue that performs the connection.
+        return "Connecting..."
     }
 }
 
