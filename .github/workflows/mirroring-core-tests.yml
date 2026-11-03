@@ -1,0 +1,13 @@
+name: Mirroring core tests
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test mirroring lifecycle and preferences
+        run: swift test
